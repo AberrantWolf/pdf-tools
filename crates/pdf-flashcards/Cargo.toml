@@ -1,0 +1,9 @@
+[package]
+name = "pdf-flashcards"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+printpdf = "0.8"
+csv.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "pdf-tools-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "pdft"
+path = "src/main.rs"
+
+[dependencies]
+pdf-flashcards = { path = "../pdf-flashcards" }
+pdf-impose = { path = "../pdf-impose" }
+clap.workspace = true
+anyhow.workspace = true

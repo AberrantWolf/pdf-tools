@@ -1,0 +1,8 @@
+[package]
+name = "pdf-impose"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lopdf.workspace = true
+thiserror.workspace = true

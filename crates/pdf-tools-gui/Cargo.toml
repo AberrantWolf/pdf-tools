@@ -1,0 +1,23 @@
+[package]
+name = "pdf-tools-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pdf-flashcards = { path = "../pdf-flashcards" }
+pdf-impose = { path = "../pdf-impose" }
+eframe.workspace = true
+egui.workspace = true
+image.workspace = true
+anyhow.workspace = true
+
+# PDF rendering (not available on WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdfium-render = { workspace = true, optional = true }
+
+[features]
+default = ["pdf-viewer"]
+pdf-viewer = ["pdfium-render"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
