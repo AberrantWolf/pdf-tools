@@ -3520,12 +3520,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-async-runtime"
+version = "0.1.0"
+dependencies = [
+ "pdf-flashcards",
+ "pdf-impose",
+ "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
 name = "pdf-flashcards"
 version = "0.1.0"
 dependencies = [
  "csv",
  "printpdf",
  "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]
@@ -3534,6 +3545,7 @@ version = "0.1.0"
 dependencies = [
  "lopdf 0.36.0",
  "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]
@@ -3544,6 +3556,7 @@ dependencies = [
  "clap",
  "pdf-flashcards",
  "pdf-impose",
+ "tokio",
 ]
 
 [[package]]
@@ -3554,9 +3567,11 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "pdf-async-runtime",
  "pdf-flashcards",
  "pdf-impose",
  "pdfium-render",
+ "tokio",
  "wasm-bindgen-futures",
 ]
 
@@ -4984,6 +4999,27 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tokio"
+version = "1.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
+dependencies = [
+ "pin-project-lite",
+ "tokio-macros",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.113",
+]
 
 [[package]]
 name = "toml_datetime"

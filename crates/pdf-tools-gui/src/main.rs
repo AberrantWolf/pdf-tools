@@ -3,8 +3,14 @@
 use eframe::egui;
 
 mod app;
+mod worker;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    // Initialize tokio runtime for desktop
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let handle = rt.handle().clone();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024.0, 768.0])
@@ -15,7 +21,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "PDF Tools",
         options,
-        Box::new(|cc| Ok(Box::new(app::PdfToolsApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::PdfToolsApp::new(cc, handle)))),
     )
 }
 

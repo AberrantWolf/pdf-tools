@@ -10,6 +10,8 @@ pub enum ImposeError {
     Io(#[from] std::io::Error),
     #[error("Invalid configuration: {0}")]
     Config(String),
+    #[error("Task join error: {0}")]
+    TaskJoin(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = std::result::Result<T, ImposeError>;
@@ -46,12 +48,30 @@ impl Default for ImpositionOptions {
 }
 
 /// Load a PDF document
-pub fn load_pdf(path: impl AsRef<Path>) -> Result<Document> {
-    Ok(Document::load(path)?)
+pub async fn load_pdf(path: impl AsRef<Path>) -> Result<Document> {
+    let path = path.as_ref().to_owned();
+
+    // Read file async
+    let bytes = tokio::fs::read(&path).await?;
+
+    // Parse is CPU-bound, spawn blocking
+    let doc = tokio::task::spawn_blocking(move || Document::load_mem(&bytes)).await??;
+
+    Ok(doc)
 }
 
 /// Impose a PDF with the given layout
-pub fn impose(doc: &Document, options: &ImpositionOptions) -> Result<Document> {
+pub async fn impose(doc: &Document, options: &ImpositionOptions) -> Result<Document> {
+    let doc = doc.clone(); // lopdf Document is cheap to clone (Arc internally)
+    let options = options.clone();
+
+    // Imposition is CPU-bound
+    let imposed = tokio::task::spawn_blocking(move || impose_sync(&doc, &options)).await??;
+
+    Ok(imposed)
+}
+
+fn impose_sync(doc: &Document, options: &ImpositionOptions) -> Result<Document> {
     let page_count = doc.get_pages().len();
 
     match options.layout {
@@ -63,20 +83,20 @@ pub fn impose(doc: &Document, options: &ImpositionOptions) -> Result<Document> {
 }
 
 fn impose_n_up(
-    doc: &Document,
+    _doc: &Document,
     rows: u32,
     cols: u32,
-    options: &ImpositionOptions,
+    _options: &ImpositionOptions,
 ) -> Result<Document> {
-    let mut output = Document::with_version("1.7");
+    let output = Document::with_version("1.7");
     let pages_per_sheet = (rows * cols) as usize;
-    let page_ids: Vec<_> = doc.get_pages().keys().copied().collect();
+    let page_ids: Vec<_> = _doc.get_pages().keys().copied().collect();
 
     // Implementation: scale and position source pages onto output sheets
     // This is a simplified skeleton - full implementation would use
     // lopdf's content stream manipulation
 
-    for chunk in page_ids.chunks(pages_per_sheet) {
+    for _chunk in page_ids.chunks(pages_per_sheet) {
         // Create new page with imposed content
         // ... (full implementation would transform and place each source page)
     }
@@ -85,14 +105,14 @@ fn impose_n_up(
 }
 
 fn impose_booklet(
-    doc: &Document,
+    _doc: &Document,
     page_count: usize,
-    options: &ImpositionOptions,
+    _options: &ImpositionOptions,
 ) -> Result<Document> {
     // Booklet imposition reorders pages for saddle-stitch binding
     // Sheet 1 front: [last, first], Sheet 1 back: [second, second-to-last], etc.
 
-    let mut output = Document::with_version("1.7");
+    let output = Document::with_version("1.7");
 
     // Pad to multiple of 4
     let padded_count = ((page_count + 3) / 4) * 4;
@@ -115,7 +135,19 @@ fn impose_booklet(
 }
 
 /// Save the imposed document
-pub fn save_pdf(mut doc: Document, path: impl AsRef<Path>) -> Result<()> {
-    doc.save(path)?;
+pub async fn save_pdf(mut doc: Document, path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref().to_owned();
+
+    // Save to bytes is CPU-bound
+    let bytes = tokio::task::spawn_blocking(move || {
+        let mut writer = Vec::new();
+        doc.save_to(&mut writer)?;
+        Ok::<_, ImposeError>(writer)
+    })
+    .await??;
+
+    // Write async
+    tokio::fs::write(&path, bytes).await?;
+
     Ok(())
 }

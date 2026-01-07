@@ -12,3 +12,4 @@ pdf-flashcards = { path = "../pdf-flashcards" }
 pdf-impose = { path = "../pdf-impose" }
 clap.workspace = true
 anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

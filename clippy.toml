@@ -1,0 +1,18 @@
+# Clippy configuration for pdf-tools workspace
+# Enforces modern Rust 2024 idioms and best practices
+
+# Allow unwrapping in test code
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Valid identifiers that shouldn't trigger warnings
+doc-valid-idents = ["lopdf", "printpdf", "egui", "eframe", "WASM", "PDF", "CSV"]
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 30
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Maximum number of single char bindings
+single-char-binding-names-threshold = 4

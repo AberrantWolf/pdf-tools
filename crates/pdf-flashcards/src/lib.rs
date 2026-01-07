@@ -10,6 +10,8 @@ pub enum FlashcardError {
     Pdf(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Task join error: {0}")]
+    TaskJoin(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = std::result::Result<T, FlashcardError>;
@@ -41,27 +43,52 @@ impl Default for FlashcardOptions {
     }
 }
 
-pub fn load_from_csv(path: impl AsRef<Path>) -> Result<Vec<Flashcard>> {
-    let mut reader = csv::Reader::from_path(path)?;
-    let mut cards = Vec::new();
+pub async fn load_from_csv(path: impl AsRef<Path>) -> Result<Vec<Flashcard>> {
+    let path = path.as_ref().to_owned();
 
-    for result in reader.records() {
-        let record = result?;
-        if record.len() >= 2 {
-            cards.push(Flashcard {
-                front: record[0].to_string(),
-                back: record[1].to_string(),
-            });
+    // Read file async
+    let contents = tokio::fs::read_to_string(&path).await?;
+
+    // CSV parsing is CPU-bound, spawn blocking
+    let cards = tokio::task::spawn_blocking(move || {
+        let mut reader = csv::Reader::from_reader(contents.as_bytes());
+        let mut cards = Vec::new();
+
+        for result in reader.records() {
+            let record = result?;
+            if record.len() >= 2 {
+                cards.push(Flashcard {
+                    front: record[0].to_string(),
+                    back: record[1].to_string(),
+                });
+            }
         }
-    }
+        Ok::<_, FlashcardError>(cards)
+    })
+    .await??;
+
     Ok(cards)
 }
 
-pub fn generate_pdf(
+pub async fn generate_pdf(
     cards: &[Flashcard],
     options: &FlashcardOptions,
     output_path: impl AsRef<Path>,
 ) -> Result<()> {
+    let cards = cards.to_vec();
+    let options = options.clone();
+    let output_path = output_path.as_ref().to_owned();
+
+    // PDF generation is CPU-bound, spawn blocking
+    let bytes = tokio::task::spawn_blocking(move || generate_pdf_bytes(&cards, &options)).await??;
+
+    // Async file write
+    tokio::fs::write(&output_path, bytes).await?;
+
+    Ok(())
+}
+
+fn generate_pdf_bytes(cards: &[Flashcard], options: &FlashcardOptions) -> Result<Vec<u8>> {
     let mut doc = PdfDocument::new("Flashcards");
 
     let cards_per_page = options.cards_per_page;
@@ -131,6 +158,5 @@ pub fn generate_pdf(
     let mut warnings = Vec::new();
     let bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
 
-    std::fs::write(output_path, bytes)?;
-    Ok(())
+    Ok(bytes)
 }

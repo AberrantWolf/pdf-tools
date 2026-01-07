@@ -1,0 +1,14 @@
+[package]
+name = "pdf-async-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["sync"] }
+thiserror.workspace = true
+
+# Re-export types from library crates
+pdf-flashcards = { path = "../pdf-flashcards" }
+pdf-impose = { path = "../pdf-impose" }

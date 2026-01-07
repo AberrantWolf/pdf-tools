@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "sync", "rt"] }

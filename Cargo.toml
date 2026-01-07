@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/pdf-async-runtime",
     "crates/pdf-flashcards",
     "crates/pdf-impose",
     "crates/pdf-tools-cli",
@@ -26,6 +27,9 @@ eframe = "0.31"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = "1"
 
 # Common utilities
 csv = "1.3"

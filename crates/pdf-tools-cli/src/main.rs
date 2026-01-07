@@ -42,31 +42,43 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Flashcards { input, output, cards_per_page } => {
-            let cards = pdf_flashcards::load_from_csv(&input)?;
+        Commands::Flashcards {
+            input,
+            output,
+            cards_per_page,
+        } => {
+            let cards = pdf_flashcards::load_from_csv(&input).await?;
             let options = pdf_flashcards::FlashcardOptions {
                 cards_per_page,
                 ..Default::default()
             };
-            pdf_flashcards::generate_pdf(&cards, &options, &output)?;
+            pdf_flashcards::generate_pdf(&cards, &options, &output).await?;
             println!("Generated {} flashcards → {}", cards.len(), output.display());
         }
 
-        Commands::Impose { input, output, layout } => {
-            let doc = pdf_impose::load_pdf(&input)?;
+        Commands::Impose {
+            input,
+            output,
+            layout,
+        } => {
+            let doc = pdf_impose::load_pdf(&input).await?;
             let layout = match layout.as_str() {
                 "2up" => pdf_impose::ImpositionLayout::TwoUp,
                 "4up" => pdf_impose::ImpositionLayout::FourUp,
                 "booklet" => pdf_impose::ImpositionLayout::Booklet,
                 _ => anyhow::bail!("Unknown layout: {layout}"),
             };
-            let options = pdf_impose::ImpositionOptions { layout, ..Default::default() };
-            let imposed = pdf_impose::impose(&doc, &options)?;
-            pdf_impose::save_pdf(imposed, &output)?;
+            let options = pdf_impose::ImpositionOptions {
+                layout,
+                ..Default::default()
+            };
+            let imposed = pdf_impose::impose(&doc, &options).await?;
+            pdf_impose::save_pdf(imposed, &output).await?;
             println!("Imposed → {}", output.display());
         }
     }
