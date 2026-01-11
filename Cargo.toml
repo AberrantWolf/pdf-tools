@@ -19,11 +19,12 @@ authors = ["Your Name <you@example.com>"]
 oxidize-pdf = "1.6"
 printpdf = "0.8"
 lopdf = "0.36"
-pdfium-render = "0.8"
+pdfium-render = { version = "0.8", default-features = false, features = ["pdfium_7543", "image"] }
 
 # GUI
 egui = "0.31"
 eframe = "0.31"
+rfd = "0.15"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

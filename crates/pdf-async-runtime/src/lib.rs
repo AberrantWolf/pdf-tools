@@ -23,6 +23,16 @@ pub enum PdfCommand {
         options: ImpositionOptions,
         output_path: PathBuf,
     },
+    ViewerLoad {
+        path: PathBuf,
+    },
+    ViewerRenderPage {
+        doc_id: DocumentId,
+        page_index: usize,
+    },
+    ViewerClose {
+        doc_id: DocumentId,
+    },
 }
 
 /// Updates sent from worker to UI
@@ -49,6 +59,20 @@ pub enum PdfUpdate {
     },
     Error {
         message: String,
+    },
+    ViewerLoaded {
+        doc_id: DocumentId,
+        page_count: usize,
+    },
+    ViewerPageRendered {
+        doc_id: DocumentId,
+        page_index: usize,
+        width: usize,
+        height: usize,
+        rgba_data: Vec<u8>,
+    },
+    ViewerClosed {
+        doc_id: DocumentId,
     },
 }
 

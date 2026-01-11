@@ -11,6 +11,7 @@ eframe.workspace = true
 egui.workspace = true
 image.workspace = true
 anyhow.workspace = true
+rfd.workspace = true
 
 # PDF rendering (not available on WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -24,3 +25,8 @@ pdf-viewer = ["pdfium-render"]
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
 tokio = { workspace = true, features = ["sync"] }
+
+[build-dependencies]
+ureq = { version = "2", features = ["native-tls"] }
+flate2 = "1"
+tar = "0.4"
