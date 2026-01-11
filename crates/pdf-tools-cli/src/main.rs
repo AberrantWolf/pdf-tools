@@ -21,9 +21,21 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Cards per page
-        #[arg(long, default_value = "4")]
-        cards_per_page: usize,
+        /// Rows per page
+        #[arg(long, default_value = "2")]
+        rows: usize,
+
+        /// Columns per page
+        #[arg(long, default_value = "3")]
+        columns: usize,
+
+        /// Card width in inches
+        #[arg(long, default_value = "2.5")]
+        card_width_in: f32,
+
+        /// Card height in inches
+        #[arg(long, default_value = "3.5")]
+        card_height_in: f32,
     },
 
     /// Impose PDF pages
@@ -50,15 +62,25 @@ async fn main() -> Result<()> {
         Commands::Flashcards {
             input,
             output,
-            cards_per_page,
+            rows,
+            columns,
+            card_width_in,
+            card_height_in,
         } => {
             let cards = pdf_flashcards::load_from_csv(&input).await?;
             let options = pdf_flashcards::FlashcardOptions {
-                cards_per_page,
+                rows,
+                columns,
+                card_width_mm: card_width_in * 25.4,
+                card_height_mm: card_height_in * 25.4,
                 ..Default::default()
             };
             pdf_flashcards::generate_pdf(&cards, &options, &output).await?;
-            println!("Generated {} flashcards → {}", cards.len(), output.display());
+            println!(
+                "Generated {} flashcards → {}",
+                cards.len(),
+                output.display()
+            );
         }
 
         Commands::Impose {

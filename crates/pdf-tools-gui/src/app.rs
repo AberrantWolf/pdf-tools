@@ -2,7 +2,7 @@ use eframe::egui;
 use pdf_async_runtime::{PdfCommand, PdfUpdate};
 use tokio::sync::mpsc;
 
-use crate::views::{ViewerState, show_flashcards, show_impose, show_viewer};
+use crate::views::{FlashcardState, ViewerState, show_flashcards, show_impose, show_viewer};
 
 #[derive(Default, PartialEq)]
 enum Mode {
@@ -21,7 +21,6 @@ struct ProgressState {
 
 pub struct PdfToolsApp {
     mode: Mode,
-    csv_path: String,
     pdf_path: String,
     status: String,
 
@@ -32,7 +31,8 @@ pub struct PdfToolsApp {
     // Progress tracking
     progress: Option<ProgressState>,
 
-    // Viewer state
+    // Feature state
+    flashcard_state: FlashcardState,
     viewer_state: Option<ViewerState>,
 
     // Runtime handle (native only)
@@ -51,12 +51,12 @@ impl PdfToolsApp {
 
         Self {
             mode: Mode::default(),
-            csv_path: String::new(),
             pdf_path: String::new(),
             status: String::new(),
             command_tx,
             update_rx,
             progress: None,
+            flashcard_state: FlashcardState::default(),
             viewer_state: None,
             _tokio_handle: tokio_handle,
         }
@@ -72,12 +72,12 @@ impl PdfToolsApp {
 
         Self {
             mode: Mode::default(),
-            csv_path: String::new(),
             pdf_path: String::new(),
             status: String::new(),
             command_tx,
             update_rx,
             progress: None,
+            flashcard_state: FlashcardState::default(),
             viewer_state: None,
         }
     }
@@ -119,18 +119,17 @@ impl eframe::App for PdfToolsApp {
                 PdfUpdate::FlashcardsLoaded { cards } => {
                     self.status = format!("Loaded {} flashcards from CSV", cards.len());
                     self.progress = None;
-                    // Store cards for generation (simplified - directly generate)
-                    let options = pdf_async_runtime::FlashcardOptions::default();
-                    let _ = self.command_tx.send(PdfCommand::FlashcardsGenerate {
-                        cards,
-                        options,
-                        output_path: "flashcards.pdf".into(),
-                    });
+                    self.flashcard_state.cards = cards;
                 }
                 PdfUpdate::FlashcardsComplete { path, card_count } => {
                     self.status =
                         format!("Generated {} flashcards → {}", card_count, path.display());
                     self.progress = None;
+
+                    // Load preview if it's a temp file
+                    if path.starts_with(std::env::temp_dir()) {
+                        let _ = self.command_tx.send(PdfCommand::ViewerLoad { path });
+                    }
                 }
                 PdfUpdate::ImposeLoaded { doc_id, page_count } => {
                     self.status =
@@ -146,12 +145,24 @@ impl eframe::App for PdfToolsApp {
                     self.progress = None;
                 }
                 PdfUpdate::ViewerLoaded { doc_id, page_count } => {
-                    self.viewer_state = Some(ViewerState {
+                    let new_viewer_state = ViewerState {
                         current_doc_id: Some(doc_id),
                         current_page: 0,
                         total_pages: page_count,
                         page_texture: None,
-                    });
+                    };
+
+                    // Update viewer state based on current mode
+                    match self.mode {
+                        Mode::Flashcards => {
+                            self.flashcard_state.preview_viewer = Some(new_viewer_state.clone());
+                        }
+                        Mode::Viewer => {
+                            self.viewer_state = Some(new_viewer_state.clone());
+                        }
+                        _ => {}
+                    }
+
                     self.status = format!("Loaded PDF with {} pages", page_count);
                     self.progress = None;
 
@@ -170,17 +181,31 @@ impl eframe::App for PdfToolsApp {
                     let color_image =
                         egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba_data);
 
+                    // Update the appropriate viewer state
                     if let Some(state) = &mut self.viewer_state {
                         if let Some(texture) = &mut state.page_texture {
-                            texture.set(color_image, egui::TextureOptions::default());
+                            texture.set(color_image.clone(), egui::TextureOptions::default());
                         } else {
                             state.page_texture = Some(ctx.load_texture(
                                 "pdf_page",
+                                color_image.clone(),
+                                egui::TextureOptions::default(),
+                            ));
+                        }
+                    }
+
+                    if let Some(state) = &mut self.flashcard_state.preview_viewer {
+                        if let Some(texture) = &mut state.page_texture {
+                            texture.set(color_image.clone(), egui::TextureOptions::default());
+                        } else {
+                            state.page_texture = Some(ctx.load_texture(
+                                "flashcard_preview",
                                 color_image,
                                 egui::TextureOptions::default(),
                             ));
                         }
                     }
+
                     self.progress = None;
                 }
                 PdfUpdate::ViewerClosed { .. } => {
@@ -198,37 +223,35 @@ impl eframe::App for PdfToolsApp {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            match self.mode {
-                Mode::Viewer => show_viewer(
-                    ui,
-                    &mut self.viewer_state,
-                    &self.command_tx,
-                    &mut self.status,
-                ),
-                Mode::Flashcards => {
-                    show_flashcards(ui, &mut self.csv_path, &self.command_tx, &mut self.status)
-                }
-                Mode::Impose => {
-                    show_impose(ui, &mut self.pdf_path, &self.command_tx, &mut self.status)
-                }
-            }
-
+        // Status bar at bottom
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             // Show progress bar
             if let Some(ref progress) = self.progress {
-                ui.separator();
                 ui.label(&progress.operation);
                 ui.add(
                     egui::ProgressBar::new(progress.current as f32 / progress.total.max(1) as f32)
                         .show_percentage(),
                 );
                 ctx.request_repaint(); // Keep updating during operations
-            }
-
-            if !self.status.is_empty() {
-                ui.separator();
+            } else if !self.status.is_empty() {
                 ui.label(&self.status);
             }
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| match self.mode {
+            Mode::Viewer => show_viewer(
+                ui,
+                &mut self.viewer_state,
+                &self.command_tx,
+                &mut self.status,
+            ),
+            Mode::Flashcards => show_flashcards(
+                ui,
+                &mut self.flashcard_state,
+                &self.command_tx,
+                &mut self.status,
+            ),
+            Mode::Impose => show_impose(ui, &mut self.pdf_path, &self.command_tx, &mut self.status),
         });
     }
 }

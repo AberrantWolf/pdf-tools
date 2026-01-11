@@ -11,6 +11,7 @@ pub struct ViewerState {
 }
 
 impl ViewerState {
+    #[allow(dead_code)]
     pub fn new(doc_id: DocumentId, page_count: usize) -> Self {
         Self {
             current_doc_id: Some(doc_id),
