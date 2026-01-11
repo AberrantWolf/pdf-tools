@@ -3,6 +3,9 @@
 use eframe::egui;
 
 mod app;
+mod handlers;
+mod viewer;
+mod views;
 mod worker;
 
 #[cfg(not(target_arch = "wasm32"))]
