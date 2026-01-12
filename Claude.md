@@ -19,6 +19,7 @@ Collection of PDF processing and generation tools - features wanted but not foun
 Located in `crates/`:
 - `pdf-tools-cli` - CLI interface
 - `pdf-tools-gui` - GUI interface (egui/eframe)
+- `pdf-async-runtime` - Async runtime/communication layer (shared)
 - `pdf-impose` - PDF imposition library (shared)
 - `pdf-flashcards` - PDF flashcard generation library (shared)
 - Additional crates as needed for shared functionality

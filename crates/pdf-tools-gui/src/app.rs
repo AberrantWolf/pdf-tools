@@ -3,7 +3,9 @@ use pdf_async_runtime::{PdfCommand, PdfUpdate};
 use tokio::sync::mpsc;
 
 use crate::logger::AppLogger;
-use crate::views::{FlashcardState, ViewerState, show_flashcards, show_impose, show_viewer};
+use crate::views::{
+    FlashcardState, ImposeState, ViewerState, show_flashcards, show_impose, show_viewer,
+};
 
 #[derive(Default, PartialEq)]
 enum Mode {
@@ -22,7 +24,6 @@ struct ProgressState {
 
 pub struct PdfToolsApp {
     mode: Mode,
-    pdf_path: String,
 
     // Logging
     logger: AppLogger,
@@ -38,6 +39,7 @@ pub struct PdfToolsApp {
     // Feature state
     flashcard_state: FlashcardState,
     viewer_state: Option<ViewerState>,
+    impose_state: ImposeState,
 
     // Runtime handle (native only)
     #[cfg(not(target_arch = "wasm32"))]
@@ -60,7 +62,6 @@ impl PdfToolsApp {
 
         Self {
             mode: Mode::default(),
-            pdf_path: String::new(),
             logger,
             log_viewer_open: false,
             command_tx,
@@ -68,6 +69,7 @@ impl PdfToolsApp {
             progress: None,
             flashcard_state: FlashcardState::default(),
             viewer_state: None,
+            impose_state: ImposeState::default(),
             _tokio_handle: tokio_handle,
         }
     }
@@ -87,7 +89,6 @@ impl PdfToolsApp {
 
         Self {
             mode: Mode::default(),
-            pdf_path: String::new(),
             logger,
             log_viewer_open: false,
             command_tx,
@@ -95,6 +96,7 @@ impl PdfToolsApp {
             progress: None,
             flashcard_state: FlashcardState::default(),
             viewer_state: None,
+            impose_state: ImposeState::default(),
         }
     }
 }
@@ -153,6 +155,36 @@ impl eframe::App for PdfToolsApp {
                 PdfUpdate::ImposeComplete { path } => {
                     log::info!("Imposed PDF → {}", path.display());
                     self.progress = None;
+
+                    // Load preview if it's a temp file
+                    if path.starts_with(std::env::temp_dir()) {
+                        let _ = self.command_tx.send(PdfCommand::ViewerLoad { path });
+                    }
+                }
+                PdfUpdate::ImposePreviewGenerated { doc_id, page_count } => {
+                    log::info!("Preview generated with {} pages", page_count);
+                    self.impose_state.preview_doc_id = Some(doc_id);
+                    self.impose_state.preview_page_count = page_count;
+                    self.progress = None;
+
+                    // Request render of first page
+                    let _ = self.command_tx.send(PdfCommand::ViewerRenderPage {
+                        doc_id,
+                        page_index: 0,
+                    });
+                }
+                PdfUpdate::ImposeConfigLoaded { options } => {
+                    log::info!("Configuration loaded");
+                    self.impose_state.options = options.clone();
+                    self.progress = None;
+
+                    // Recalculate stats with new options
+                    let _ = self
+                        .command_tx
+                        .send(PdfCommand::ImposeCalculateStats { options });
+                }
+                PdfUpdate::ImposeStatsCalculated { stats } => {
+                    self.impose_state.stats = Some(stats);
                 }
                 PdfUpdate::Error { message } => {
                     log::error!("Error: {}", message);
@@ -174,7 +206,9 @@ impl eframe::App for PdfToolsApp {
                         Mode::Viewer => {
                             self.viewer_state = Some(new_viewer_state.clone());
                         }
-                        _ => {}
+                        Mode::Impose => {
+                            self.impose_state.preview_viewer = Some(new_viewer_state.clone());
+                        }
                     }
 
                     log::info!("Loaded PDF with {} pages", page_count);
@@ -214,6 +248,18 @@ impl eframe::App for PdfToolsApp {
                         } else {
                             state.page_texture = Some(ctx.load_texture(
                                 "flashcard_preview",
+                                color_image.clone(),
+                                egui::TextureOptions::default(),
+                            ));
+                        }
+                    }
+
+                    if let Some(state) = &mut self.impose_state.preview_viewer {
+                        if let Some(texture) = &mut state.page_texture {
+                            texture.set(color_image.clone(), egui::TextureOptions::default());
+                        } else {
+                            state.page_texture = Some(ctx.load_texture(
+                                "impose_preview",
                                 color_image,
                                 egui::TextureOptions::default(),
                             ));
@@ -330,7 +376,7 @@ impl eframe::App for PdfToolsApp {
         egui::CentralPanel::default().show(ctx, |ui| match self.mode {
             Mode::Viewer => show_viewer(ui, &mut self.viewer_state, &self.command_tx),
             Mode::Flashcards => show_flashcards(ui, &mut self.flashcard_state, &self.command_tx),
-            Mode::Impose => show_impose(ui, &mut self.pdf_path, &self.command_tx),
+            Mode::Impose => show_impose(ui, &mut self.impose_state, &self.command_tx),
         });
     }
 }

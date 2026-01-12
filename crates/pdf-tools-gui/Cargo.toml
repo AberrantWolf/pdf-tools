@@ -14,6 +14,7 @@ anyhow.workspace = true
 rfd.workspace = true
 log = "0.4"
 chrono = "0.4"
+lopdf.workspace = true
 
 # PDF rendering (not available on WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

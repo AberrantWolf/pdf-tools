@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 // Re-export types from library crates
 pub use pdf_flashcards::{Flashcard, FlashcardOptions};
-pub use pdf_impose::{ImpositionLayout, ImpositionOptions};
+pub use pdf_impose::{ImpositionOptions, ImpositionStatistics};
 
 /// Commands sent from UI to worker
 #[derive(Debug)]
@@ -22,6 +22,19 @@ pub enum PdfCommand {
         doc_id: DocumentId,
         options: ImpositionOptions,
         output_path: PathBuf,
+    },
+    ImposeGeneratePreview {
+        options: ImpositionOptions,
+    },
+    ImposeGenerate {
+        options: ImpositionOptions,
+        output_path: PathBuf,
+    },
+    ImposeLoadConfig {
+        path: PathBuf,
+    },
+    ImposeCalculateStats {
+        options: ImpositionOptions,
     },
     ViewerLoad {
         path: PathBuf,
@@ -56,6 +69,16 @@ pub enum PdfUpdate {
     },
     ImposeComplete {
         path: PathBuf,
+    },
+    ImposePreviewGenerated {
+        doc_id: DocumentId,
+        page_count: usize,
+    },
+    ImposeConfigLoaded {
+        options: ImpositionOptions,
+    },
+    ImposeStatsCalculated {
+        stats: ImpositionStatistics,
     },
     Error {
         message: String,

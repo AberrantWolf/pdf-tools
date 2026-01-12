@@ -19,6 +19,8 @@ pub async fn worker_task(
         }
     };
 
+    let mut impose_doc_store = handlers::impose::ImposeDocStore::new();
+
     while let Some(cmd) = command_rx.recv().await {
         match cmd {
             PdfCommand::FlashcardsLoadCsv { input_path } => {
@@ -37,6 +39,26 @@ pub async fn worker_task(
             }
             PdfCommand::ImposeProcess { .. } => {
                 handlers::impose::handle_process(&update_tx).await;
+            }
+            PdfCommand::ImposeGeneratePreview { options } => {
+                handlers::impose::handle_generate_preview(
+                    options,
+                    &mut impose_doc_store,
+                    &update_tx,
+                )
+                .await;
+            }
+            PdfCommand::ImposeGenerate {
+                options,
+                output_path,
+            } => {
+                handlers::impose::handle_generate(options, output_path, &update_tx).await;
+            }
+            PdfCommand::ImposeLoadConfig { path } => {
+                handlers::impose::handle_load_config(path, &update_tx).await;
+            }
+            PdfCommand::ImposeCalculateStats { options } => {
+                handlers::impose::handle_calculate_stats(options, &update_tx).await;
             }
             #[cfg(feature = "pdf-viewer")]
             PdfCommand::ViewerLoad { path } => {
