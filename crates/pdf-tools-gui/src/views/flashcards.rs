@@ -5,10 +5,26 @@ use tokio::sync::mpsc;
 
 use super::ViewerState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizingMode {
+    Grid,     // Specify rows/columns, card size is calculated
+    CardSize, // Specify card size, rows/columns are calculated
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MaxValueType {
+    Margin,
+    CardSize,
+    Spacing,
+}
+
 pub struct FlashcardState {
     pub csv_path: String,
     pub paper_type: PaperType,
     pub measurement_system: MeasurementSystem,
+
+    // Sizing mode
+    pub sizing_mode: SizingMode,
 
     // Margins in current measurement system
     pub margin_top: f32,
@@ -47,6 +63,7 @@ impl Default for FlashcardState {
             csv_path: String::new(),
             paper_type: PaperType::Letter,
             measurement_system,
+            sizing_mode: SizingMode::Grid,
             margin_top: 0.4,
             margin_bottom: 0.4,
             margin_left: 0.4,
@@ -93,8 +110,40 @@ impl FlashcardState {
         }
     }
 
-    // TODO: Add a drop-down to specify EITHER number of rows/cols OR card size, not both
-    // The unselected one is grayed out. Otherwise it just gets too cumbersome to track.
+    fn get_max_value(&self, value_type: MaxValueType) -> f32 {
+        match value_type {
+            MaxValueType::Margin => match self.measurement_system {
+                MeasurementSystem::Inches => 2.0,
+                MeasurementSystem::Millimeters => 50.0,
+                MeasurementSystem::Points => 144.0,
+            },
+            MaxValueType::CardSize => match self.measurement_system {
+                MeasurementSystem::Inches => 10.0,
+                MeasurementSystem::Millimeters => 250.0,
+                MeasurementSystem::Points => 720.0,
+            },
+            MaxValueType::Spacing => match self.measurement_system {
+                MeasurementSystem::Inches => 1.0,
+                MeasurementSystem::Millimeters => 25.0,
+                MeasurementSystem::Points => 72.0,
+            },
+        }
+    }
+
+    fn convert_value(&mut self, old_system: MeasurementSystem, value: f32) -> f32 {
+        self.measurement_system.from_mm(old_system.to_mm(value))
+    }
+
+    pub fn convert_all_values(&mut self, old_system: MeasurementSystem) {
+        self.margin_top = self.convert_value(old_system, self.margin_top);
+        self.margin_bottom = self.convert_value(old_system, self.margin_bottom);
+        self.margin_left = self.convert_value(old_system, self.margin_left);
+        self.margin_right = self.convert_value(old_system, self.margin_right);
+        self.card_width = self.convert_value(old_system, self.card_width);
+        self.card_height = self.convert_value(old_system, self.card_height);
+        self.row_spacing = self.convert_value(old_system, self.row_spacing);
+        self.column_spacing = self.convert_value(old_system, self.column_spacing);
+    }
 
     // Calculate rows/columns from card size
     pub fn recalculate_grid_from_card_size(&mut self) {
@@ -148,7 +197,6 @@ pub fn show_flashcards(
     ui: &mut egui::Ui,
     state: &mut FlashcardState,
     command_tx: &mpsc::UnboundedSender<PdfCommand>,
-    status: &mut String,
 ) {
     egui::SidePanel::left("flashcard_controls")
         .min_width(300.0)
@@ -167,10 +215,10 @@ pub fn show_flashcards(
                             .pick_file()
                         {
                             state.csv_path = path.display().to_string();
+                            log::info!("Loading CSV: {}", path.display());
                             // Load CSV
                             let _ =
                                 command_tx.send(PdfCommand::FlashcardsLoadCsv { input_path: path });
-                            *status = "Loading CSV...".to_string();
                         }
                     }
                 });
@@ -232,17 +280,7 @@ pub fn show_flashcards(
 
                 // Convert values if system changed
                 if old_system != state.measurement_system {
-                    let to_mm = |v| old_system.to_mm(v);
-                    let from_mm = |v| state.measurement_system.from_mm(v);
-
-                    state.margin_top = from_mm(to_mm(state.margin_top));
-                    state.margin_bottom = from_mm(to_mm(state.margin_bottom));
-                    state.margin_left = from_mm(to_mm(state.margin_left));
-                    state.margin_right = from_mm(to_mm(state.margin_right));
-                    state.card_width = from_mm(to_mm(state.card_width));
-                    state.card_height = from_mm(to_mm(state.card_height));
-                    state.row_spacing = from_mm(to_mm(state.row_spacing));
-                    state.column_spacing = from_mm(to_mm(state.column_spacing));
+                    state.convert_all_values(old_system);
                 }
 
                 ui.add_space(10.0);
@@ -251,11 +289,7 @@ pub fn show_flashcards(
                 // Margins
                 ui.label("Page Margins:");
                 let unit = state.measurement_system.name();
-                let margin_max = match state.measurement_system {
-                    MeasurementSystem::Inches => 2.0,
-                    MeasurementSystem::Millimeters => 50.0,
-                    MeasurementSystem::Points => 144.0,
-                };
+                let margin_max = state.get_max_value(MaxValueType::Margin);
                 changed = false;
                 changed |= ui
                     .add(
@@ -292,66 +326,99 @@ pub fn show_flashcards(
                 ui.add_space(10.0);
                 ui.separator();
 
+                // Sizing Mode
+                ui.label("Sizing Mode:");
+                egui::ComboBox::from_id_salt("sizing_mode")
+                    .selected_text(match state.sizing_mode {
+                        SizingMode::Grid => "Specify Grid (rows/columns)",
+                        SizingMode::CardSize => "Specify Card Size",
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_value(
+                                &mut state.sizing_mode,
+                                SizingMode::Grid,
+                                "Specify Grid (rows/columns)",
+                            )
+                            .changed()
+                        {
+                            state.recalculate_card_size_from_grid();
+                            state.needs_regeneration = true;
+                        }
+                        if ui
+                            .selectable_value(
+                                &mut state.sizing_mode,
+                                SizingMode::CardSize,
+                                "Specify Card Size",
+                            )
+                            .changed()
+                        {
+                            state.recalculate_grid_from_card_size();
+                            state.needs_regeneration = true;
+                        }
+                    });
+
+                ui.add_space(10.0);
+                ui.separator();
+
                 // Grid Layout
                 ui.label("Grid Layout:");
-                changed = false;
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut state.rows, 1..=10)
-                            .text("Rows")
-                            .clamping(egui::SliderClamping::Never),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut state.columns, 1..=10)
-                            .text("Columns")
-                            .clamping(egui::SliderClamping::Never),
-                    )
-                    .changed();
-                if changed {
-                    state.needs_regeneration = true;
-                }
+                ui.add_enabled_ui(state.sizing_mode == SizingMode::Grid, |ui| {
+                    changed = false;
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut state.rows, 1..=10)
+                                .text("Rows")
+                                .clamping(egui::SliderClamping::Never),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut state.columns, 1..=10)
+                                .text("Columns")
+                                .clamping(egui::SliderClamping::Never),
+                        )
+                        .changed();
+                    if changed {
+                        state.recalculate_card_size_from_grid();
+                        state.needs_regeneration = true;
+                    }
+                });
 
                 ui.add_space(10.0);
                 ui.separator();
 
                 // Card Size
                 ui.label("Card Size:");
-                let card_max = match state.measurement_system {
-                    MeasurementSystem::Inches => 10.0,
-                    MeasurementSystem::Millimeters => 250.0,
-                    MeasurementSystem::Points => 720.0,
-                };
-                changed = false;
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut state.card_width, 0.0..=card_max)
-                            .text(format!("Width ({})", unit))
-                            .clamping(egui::SliderClamping::Never),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut state.card_height, 0.0..=card_max)
-                            .text(format!("Height ({})", unit))
-                            .clamping(egui::SliderClamping::Never),
-                    )
-                    .changed();
-                if changed {
-                    state.needs_regeneration = true;
-                }
+                ui.add_enabled_ui(state.sizing_mode == SizingMode::CardSize, |ui| {
+                    let card_max = state.get_max_value(MaxValueType::CardSize);
+                    changed = false;
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut state.card_width, 0.0..=card_max)
+                                .text(format!("Width ({})", unit))
+                                .clamping(egui::SliderClamping::Never),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut state.card_height, 0.0..=card_max)
+                                .text(format!("Height ({})", unit))
+                                .clamping(egui::SliderClamping::Never),
+                        )
+                        .changed();
+                    if changed {
+                        state.recalculate_grid_from_card_size();
+                        state.needs_regeneration = true;
+                    }
+                });
 
                 ui.add_space(10.0);
                 ui.separator();
 
                 // Spacing
                 ui.label("Spacing:");
-                let spacing_max = match state.measurement_system {
-                    MeasurementSystem::Inches => 1.0,
-                    MeasurementSystem::Millimeters => 25.0,
-                    MeasurementSystem::Points => 72.0,
-                };
+                let spacing_max = state.get_max_value(MaxValueType::Spacing);
                 changed = false;
                 changed |= ui
                     .add(
@@ -390,12 +457,12 @@ pub fn show_flashcards(
                 if ui.button("📄 Generate Preview").clicked() && !state.cards.is_empty() {
                     state.needs_regeneration = false;
                     let options = state.to_options();
+                    log::info!("Generating flashcard preview");
                     let _ = command_tx.send(PdfCommand::FlashcardsGenerate {
                         cards: state.cards.clone(),
                         options,
                         output_path: std::env::temp_dir().join("flashcards_preview.pdf"),
                     });
-                    *status = "Generating preview...".to_string();
                 }
 
                 if ui.button("💾 Save PDF...").clicked() && !state.cards.is_empty() {
@@ -404,26 +471,25 @@ pub fn show_flashcards(
                         .set_file_name("flashcards.pdf")
                         .save_file()
                     {
+                        log::info!("Saving flashcards to: {}", path.display());
                         let options = state.to_options();
                         let _ = command_tx.send(PdfCommand::FlashcardsGenerate {
                             cards: state.cards.clone(),
                             options,
                             output_path: path,
                         });
-                        *status = "Saving PDF...".to_string();
                     }
                 }
 
                 if state.needs_regeneration && !state.cards.is_empty() {
-                    state.recalculate_card_size_from_grid();
                     let options = state.to_options();
+                    log::info!("Regenerating preview due to settings change");
                     let _ = command_tx.send(PdfCommand::FlashcardsGenerate {
                         cards: state.cards.clone(),
                         options,
                         output_path: std::env::temp_dir().join("flashcards_preview.pdf"),
                     });
                     state.needs_regeneration = false;
-                    *status = "Generating preview...".to_string();
                 }
             });
         });
@@ -431,7 +497,7 @@ pub fn show_flashcards(
     // Preview area
     egui::CentralPanel::default().show_inside(ui, |ui| {
         if state.preview_viewer.is_some() {
-            super::show_viewer(ui, &mut state.preview_viewer, command_tx, status);
+            super::show_viewer(ui, &mut state.preview_viewer, command_tx);
         } else if state.cards.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {

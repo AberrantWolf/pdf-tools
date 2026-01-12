@@ -26,7 +26,6 @@ pub fn show_viewer(
     ui: &mut egui::Ui,
     viewer_state: &mut Option<ViewerState>,
     command_tx: &mpsc::UnboundedSender<PdfCommand>,
-    status: &mut String,
 ) {
     if let Some(state) = viewer_state {
         // Show navigation bar
@@ -44,7 +43,7 @@ pub fn show_viewer(
                         doc_id,
                         page_index: state.current_page,
                     });
-                    *status = format!("Rendering page {}...", state.current_page + 1);
+                    log::info!("Rendering page {}...", state.current_page + 1);
                 }
             }
 
@@ -64,7 +63,7 @@ pub fn show_viewer(
                         doc_id,
                         page_index: state.current_page,
                     });
-                    *status = format!("Rendering page {}...", state.current_page + 1);
+                    log::info!("Rendering page {}...", state.current_page + 1);
                 }
             }
 
@@ -114,8 +113,8 @@ pub fn show_viewer(
                         .add_filter("PDF", &["pdf"])
                         .pick_file()
                     {
+                        log::info!("Loading PDF: {}", path.display());
                         let _ = command_tx.send(PdfCommand::ViewerLoad { path });
-                        *status = "Loading PDF...".to_string();
                     }
                 }
             }

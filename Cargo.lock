@@ -3719,10 +3719,12 @@ name = "pdf-tools-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "eframe",
  "egui",
  "flate2",
  "image",
+ "log",
  "pdf-async-runtime",
  "pdf-flashcards",
  "pdf-impose",
