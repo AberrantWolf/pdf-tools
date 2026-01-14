@@ -2,23 +2,36 @@
 //!
 //! This module provides functions to generate PDF content stream operations
 //! for various printer's marks: fold lines, crop marks, registration marks, etc.
+//!
+//! Marks are rendered per-leaf (the folded/trimmed unit), not per-page.
+//! This means crop marks appear at the corners of the entire leaf area,
+//! while fold and cut lines appear at internal boundaries.
 
 use crate::types::PrinterMarks;
 
-/// Configuration for rendering marks
+/// Configuration for rendering marks on an imposed sheet.
+///
+/// The layout hierarchy is:
+/// - Sheet: The entire output page (e.g., Letter, A3)
+/// - Leaf area: The region inside sheet margins where content is placed
+/// - Cells: Individual page positions within the leaf area (arranged in grid)
 pub struct MarksConfig {
-    /// Number of columns in the grid
+    /// Number of columns in the page grid
     pub cols: usize,
-    /// Number of rows in the grid
+    /// Number of rows in the page grid
     pub rows: usize,
-    /// Cell width in points
+    /// Width of each cell (page position) in points
     pub cell_width: f32,
-    /// Cell height in points
+    /// Height of each cell (page position) in points
     pub cell_height: f32,
-    /// Left margin (fore-edge) in points - where content area starts
-    pub margin_left: f32,
-    /// Bottom margin in points - where content area starts
-    pub margin_bottom: f32,
+    /// Left edge of the leaf area in points (after sheet margins)
+    pub leaf_left: f32,
+    /// Bottom edge of the leaf area in points (after sheet margins)
+    pub leaf_bottom: f32,
+    /// Right edge of the leaf area in points
+    pub leaf_right: f32,
+    /// Top edge of the leaf area in points
+    pub leaf_top: f32,
 }
 
 /// Line weight for different mark types (in points)
@@ -80,11 +93,6 @@ fn generate_fold_lines(config: &MarksConfig) -> String {
     ops.push_str(&format!("{} w\n", FOLD_LINE_WIDTH)); // line width
     ops.push_str("[6 3] 0 d\n"); // dashed line pattern: 6pt dash, 3pt gap
 
-    // Content area bounds
-    let content_left = config.margin_left;
-    let content_bottom = config.margin_bottom;
-    let content_top = content_bottom + (config.rows as f32 * config.cell_height);
-
     // Vertical fold lines (between columns)
     // For 4-column layouts (octavo), the center line (col 2) is a cut, not a fold
     for col in 1..config.cols {
@@ -92,10 +100,10 @@ fn generate_fold_lines(config: &MarksConfig) -> String {
         if config.cols == 4 && col == 2 {
             continue;
         }
-        let x = content_left + col as f32 * config.cell_width;
+        let x = config.leaf_left + col as f32 * config.cell_width;
         ops.push_str(&format!(
             "{} {} m {} {} l S\n",
-            x, content_bottom, x, content_top
+            x, config.leaf_bottom, x, config.leaf_top
         ));
     }
 
@@ -115,36 +123,30 @@ fn generate_cut_lines(config: &MarksConfig) -> String {
     ops.push_str(&format!("{} w\n", CUT_LINE_WIDTH)); // line width
     ops.push_str("[] 0 d\n"); // solid line
 
-    // Content area bounds
-    let content_left = config.margin_left;
-    let content_bottom = config.margin_bottom;
-    let content_right = content_left + (config.cols as f32 * config.cell_width);
-    let content_top = content_bottom + (config.rows as f32 * config.cell_height);
-
     // Horizontal cut lines (between rows)
     for row in 1..config.rows {
-        let y = content_bottom + row as f32 * config.cell_height;
+        let y = config.leaf_bottom + row as f32 * config.cell_height;
         ops.push_str(&format!(
             "{} {} m {} {} l S\n",
-            content_left, y, content_right, y
+            config.leaf_left, y, config.leaf_right, y
         ));
 
         // Add scissors symbol at the left side of the cut line
-        ops.push_str(&draw_scissors(content_left - SCISSORS_SIZE - 3.0, y));
+        ops.push_str(&draw_scissors(config.leaf_left - SCISSORS_SIZE - 3.0, y));
     }
 
     // Vertical center cut for 4-column layouts (octavo)
     if config.cols == 4 {
-        let x = content_left + 2.0 * config.cell_width; // Center line
+        let x = config.leaf_left + 2.0 * config.cell_width; // Center line
         ops.push_str(&format!(
             "{} {} m {} {} l S\n",
-            x, content_bottom, x, content_top
+            x, config.leaf_bottom, x, config.leaf_top
         ));
 
         // Add scissors symbol at the bottom of the vertical cut line
         ops.push_str(&draw_scissors_vertical(
             x,
-            content_bottom - SCISSORS_SIZE - 3.0,
+            config.leaf_bottom - SCISSORS_SIZE - 3.0,
         ));
     }
 
@@ -407,7 +409,7 @@ fn draw_scissors_vertical(x: f32, y: f32) -> String {
     ops
 }
 
-/// Generate crop marks (L-shaped marks at corners of the content area)
+/// Generate crop marks (L-shaped marks at corners of the leaf area)
 fn generate_crop_marks(config: &MarksConfig) -> String {
     let mut ops = String::new();
 
@@ -415,31 +417,37 @@ fn generate_crop_marks(config: &MarksConfig) -> String {
     ops.push_str(&format!("{} w\n", CROP_MARK_WIDTH));
     ops.push_str("[] 0 d\n"); // solid line
 
-    // Content area bounds
-    let content_left = config.margin_left;
-    let content_bottom = config.margin_bottom;
-    let content_right = content_left + (config.cols as f32 * config.cell_width);
-    let content_top = content_bottom + (config.rows as f32 * config.cell_height);
-
-    // Draw crop marks at the four corners of the content area
+    // Draw crop marks at the four corners of the leaf area
     // Top-left corner
-    ops.push_str(&crop_mark_top_left_top(content_left, content_top));
-    ops.push_str(&crop_mark_top_left_left(content_left, content_top));
+    ops.push_str(&crop_mark_top_left_top(config.leaf_left, config.leaf_top));
+    ops.push_str(&crop_mark_top_left_left(config.leaf_left, config.leaf_top));
 
     // Top-right corner
-    ops.push_str(&crop_mark_top_right_top(content_right, content_top));
-    ops.push_str(&crop_mark_top_right_right(content_right, content_top));
+    ops.push_str(&crop_mark_top_right_top(config.leaf_right, config.leaf_top));
+    ops.push_str(&crop_mark_top_right_right(
+        config.leaf_right,
+        config.leaf_top,
+    ));
 
     // Bottom-left corner
-    ops.push_str(&crop_mark_bottom_left_bottom(content_left, content_bottom));
-    ops.push_str(&crop_mark_bottom_left_left(content_left, content_bottom));
+    ops.push_str(&crop_mark_bottom_left_bottom(
+        config.leaf_left,
+        config.leaf_bottom,
+    ));
+    ops.push_str(&crop_mark_bottom_left_left(
+        config.leaf_left,
+        config.leaf_bottom,
+    ));
 
     // Bottom-right corner
     ops.push_str(&crop_mark_bottom_right_bottom(
-        content_right,
-        content_bottom,
+        config.leaf_right,
+        config.leaf_bottom,
     ));
-    ops.push_str(&crop_mark_bottom_right_right(content_right, content_bottom));
+    ops.push_str(&crop_mark_bottom_right_right(
+        config.leaf_right,
+        config.leaf_bottom,
+    ));
 
     ops
 }
@@ -525,28 +533,22 @@ fn crop_mark_bottom_right_right(x: f32, y: f32) -> String {
     )
 }
 
-/// Generate registration marks (crosshair circles at corners of content area)
+/// Generate registration marks (crosshair circles at corners of leaf area)
 fn generate_registration_marks(config: &MarksConfig) -> String {
     let mut ops = String::new();
 
     // Set line properties
     ops.push_str(&format!("{} w\n", REGISTRATION_MARK_WIDTH));
 
-    // Content area bounds
-    let content_left = config.margin_left;
-    let content_bottom = config.margin_bottom;
-    let content_right = content_left + (config.cols as f32 * config.cell_width);
-    let content_top = content_bottom + (config.rows as f32 * config.cell_height);
-
     let offset = CROP_MARK_GAP + CROP_MARK_LENGTH + 5.0; // Position beyond crop marks
     let half_size = REGISTRATION_MARK_SIZE / 2.0;
 
-    // Draw registration marks at the four corners of the content area
+    // Draw registration marks at the four corners of the leaf area
     let positions = [
-        (content_left - offset, content_top + offset), // Top-left
-        (content_right + offset, content_top + offset), // Top-right
-        (content_left - offset, content_bottom - offset), // Bottom-left
-        (content_right + offset, content_bottom - offset), // Bottom-right
+        (config.leaf_left - offset, config.leaf_top + offset), // Top-left
+        (config.leaf_right + offset, config.leaf_top + offset), // Top-right
+        (config.leaf_left - offset, config.leaf_bottom - offset), // Bottom-left
+        (config.leaf_right + offset, config.leaf_bottom - offset), // Bottom-right
     ];
 
     for (x, y) in positions {

@@ -14,9 +14,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut ImposeState) {
                 .changed();
             changed |= ui
                 .checkbox(
-                    &mut state.options.marks.crop_marks,
-                    "Crop marks (cut lines)",
+                    &mut state.options.marks.cut_lines,
+                    "Cut lines (with scissors)",
                 )
+                .changed();
+            changed |= ui
+                .checkbox(&mut state.options.marks.crop_marks, "Crop marks")
                 .changed();
             changed |= ui
                 .checkbox(

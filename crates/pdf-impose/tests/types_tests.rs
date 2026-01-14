@@ -52,10 +52,16 @@ fn test_rotation_degrees() {
 #[test]
 fn test_margins_default() {
     let margins = Margins::default();
-    assert_eq!(margins.top_mm, 10.0);
-    assert_eq!(margins.bottom_mm, 10.0);
-    assert_eq!(margins.fore_edge_mm, 10.0);
-    assert_eq!(margins.spine_mm, 15.0);
+    // Sheet margins (printer-safe area)
+    assert_eq!(margins.sheet.top_mm, 5.0);
+    assert_eq!(margins.sheet.bottom_mm, 5.0);
+    assert_eq!(margins.sheet.left_mm, 5.0);
+    assert_eq!(margins.sheet.right_mm, 5.0);
+    // Leaf margins (trim and gutter)
+    assert_eq!(margins.leaf.top_mm, 5.0);
+    assert_eq!(margins.leaf.bottom_mm, 5.0);
+    assert_eq!(margins.leaf.fore_edge_mm, 5.0);
+    assert_eq!(margins.leaf.spine_mm, 10.0);
 }
 
 #[test]

@@ -334,7 +334,9 @@ fn impose_with_order(
 ) -> Result<Document> {
     let mut output = Document::with_version("1.7");
 
-    let (output_width, output_height) = options.output_paper_size.dimensions_mm();
+    let (output_width, output_height) = options
+        .output_paper_size
+        .dimensions_with_orientation(options.output_orientation);
     let output_width_pt = mm_to_pt(output_width);
     let output_height_pt = mm_to_pt(output_height);
 
@@ -476,24 +478,30 @@ fn create_imposed_page(
         }
     };
 
-    // Convert margins from mm to pt
-    let _margin_spine_pt = mm_to_pt(options.margins.spine_mm);
-    let margin_fore_edge_pt = mm_to_pt(options.margins.fore_edge_mm);
-    let margin_top_pt = mm_to_pt(options.margins.top_mm);
-    let margin_bottom_pt = mm_to_pt(options.margins.bottom_mm);
+    // Convert sheet margins from mm to pt (printer-safe area)
+    let sheet_left_pt = mm_to_pt(options.margins.sheet.left_mm);
+    let sheet_right_pt = mm_to_pt(options.margins.sheet.right_mm);
+    let sheet_top_pt = mm_to_pt(options.margins.sheet.top_mm);
+    let sheet_bottom_pt = mm_to_pt(options.margins.sheet.bottom_mm);
 
-    // For book imposition:
-    // - Vertical margins (top/bottom) apply to the entire output page once
-    // - Horizontal margins are asymmetric per column (fore-edge vs spine)
-    //
-    // Each column in a 2-column layout represents one page of the booklet:
-    // - Left column: [fore-edge margin] [content] [spine margin]
-    // - Right column: [spine margin] [content] [fore-edge margin]
+    // Convert leaf margins from mm to pt (per-page margins within cells)
+    let leaf_top_pt = mm_to_pt(options.margins.leaf.top_mm);
+    let leaf_bottom_pt = mm_to_pt(options.margins.leaf.bottom_mm);
+    let leaf_fore_edge_pt = mm_to_pt(options.margins.leaf.fore_edge_mm);
+    let leaf_spine_pt = mm_to_pt(options.margins.leaf.spine_mm);
 
-    let content_width = output_width_pt - margin_fore_edge_pt * 2.0;
-    let content_height = output_height_pt - margin_top_pt - margin_bottom_pt;
-    let cell_width = content_width / cols as f32;
-    let cell_height = content_height / rows as f32;
+    // Leaf area: the region inside sheet margins where the signature content goes
+    // This is where crop marks will be placed (corners of leaf area)
+    let leaf_left = sheet_left_pt;
+    let leaf_bottom = sheet_bottom_pt;
+    let leaf_width = output_width_pt - sheet_left_pt - sheet_right_pt;
+    let leaf_height = output_height_pt - sheet_top_pt - sheet_bottom_pt;
+    let leaf_right = leaf_left + leaf_width;
+    let leaf_top = leaf_bottom + leaf_height;
+
+    // Cell dimensions (each cell holds one page of the signature)
+    let cell_width = leaf_width / cols as f32;
+    let cell_height = leaf_height / rows as f32;
 
     for (pos, page_idx_opt) in page_chunk.iter().enumerate() {
         if let Some(page_idx) = page_idx_opt {
@@ -516,39 +524,94 @@ fn create_imposed_page(
                         let col = pos % cols;
                         let row = pos / cols;
 
-                        // Calculate cell position
-                        let cell_x_start = margin_fore_edge_pt + (col as f32 * cell_width);
+                        // Calculate cell origin (bottom-left of cell)
+                        let cell_x = leaf_left + (col as f32 * cell_width);
+                        let cell_y = leaf_bottom + ((rows - row - 1) as f32 * cell_height);
 
-                        // Calculate scale to fit within cell
+                        // Calculate margins for this cell based on its position and arrangement
+                        // After folding, the spine is at the center of the sheet
+                        //
+                        // Folio (2 cols): spine between col 0 and 1
+                        //   Col 0: fore-edge left, spine right
+                        //   Col 1: spine left, fore-edge right
+                        //
+                        // Quarto (2 cols × 2 rows): same horizontal as folio
+                        //   Top row is rotated 180°, so margins flip vertically for those cells
+                        //
+                        // Octavo (4 cols × 2 rows): center cut between cols 1 and 2
+                        //   After cutting, each half is like a quarto
+                        //   Left half (cols 0,1): spine between cols 0 and 1
+                        //   Right half (cols 2,3): spine between cols 2 and 3
+                        //   Col 0: fore-edge left, spine right
+                        //   Col 1: spine left, fore-edge right (outer edge of left booklet)
+                        //   Col 2: fore-edge left (outer edge of right booklet), spine right
+                        //   Col 3: spine left, fore-edge right
+                        //
+                        // Note: cols 1 and 2 have fore-edge toward the center cut
+
+                        let (margin_left, margin_right) = match cols {
+                            2 => {
+                                // Folio or Quarto: spine in center
+                                if col == 0 {
+                                    (leaf_fore_edge_pt, leaf_spine_pt)
+                                } else {
+                                    (leaf_spine_pt, leaf_fore_edge_pt)
+                                }
+                            }
+                            4 => {
+                                // Octavo: two spines, cut in center
+                                match col {
+                                    0 => (leaf_fore_edge_pt, leaf_spine_pt), // left booklet, left page
+                                    1 => (leaf_spine_pt, leaf_fore_edge_pt), // left booklet, right page (fore-edge at cut)
+                                    2 => (leaf_fore_edge_pt, leaf_spine_pt), // right booklet, left page (fore-edge at cut)
+                                    3 => (leaf_spine_pt, leaf_fore_edge_pt), // right booklet, right page
+                                    _ => (leaf_fore_edge_pt, leaf_fore_edge_pt),
+                                }
+                            }
+                            _ => {
+                                // Generic: use average margins
+                                let avg = (leaf_fore_edge_pt + leaf_spine_pt) / 2.0;
+                                (avg, avg)
+                            }
+                        };
+
+                        // Vertical margins: top/bottom of the final page
+                        // For rotated pages (top row in quarto/octavo), the margins swap
+                        let needs_rotation = match options.page_arrangement {
+                            PageArrangement::Folio => false,
+                            PageArrangement::Quarto | PageArrangement::Octavo => row == 0,
+                            PageArrangement::Custom { .. } => false,
+                        };
+
+                        let (margin_bottom, margin_top) = if needs_rotation {
+                            // Page will be rotated 180°, so top becomes bottom
+                            (leaf_top_pt, leaf_bottom_pt)
+                        } else {
+                            (leaf_bottom_pt, leaf_top_pt)
+                        };
+
+                        // Content area within this cell
+                        let cell_content_left = cell_x + margin_left;
+                        let cell_content_bottom = cell_y + margin_bottom;
+                        let cell_content_width = cell_width - margin_left - margin_right;
+                        let cell_content_height = cell_height - margin_top - margin_bottom;
+
+                        // Calculate scale to fit within content area
                         let scale = calculate_scale(
                             src_width,
                             src_height,
-                            cell_width,
-                            cell_height,
+                            cell_content_width,
+                            cell_content_height,
                             options.scaling_mode,
                         );
 
                         let scaled_width = src_width * scale;
                         let scaled_height = src_height * scale;
 
-                        // Calculate Y position for this row (PDF y=0 is at bottom)
-                        let y_cell_offset = (rows - row - 1) as f32 * cell_height;
-
-                        // Center the scaled page within its cell
-                        let x_pos = cell_x_start + (cell_width - scaled_width) / 2.0;
+                        // Center the scaled page within its content area
+                        let x_pos = cell_content_left + (cell_content_width - scaled_width) / 2.0;
                         let y_pos =
-                            margin_bottom_pt + y_cell_offset + (cell_height - scaled_height) / 2.0;
-
-                        // Determine if this page needs 180° rotation
-                        // Based on Wikipedia diagrams:
-                        // - Folio: no rotation needed
-                        // - Quarto: top row (row 0) is rotated 180°
-                        // - Octavo: top row (row 0) is rotated 180°
-                        let needs_rotation = match options.page_arrangement {
-                            PageArrangement::Folio => false,
-                            PageArrangement::Quarto | PageArrangement::Octavo => row == 0,
-                            PageArrangement::Custom { .. } => false,
-                        };
+                            cell_content_bottom + (cell_content_height - scaled_height) / 2.0;
 
                         // Create XObject from source page
                         let xobject_name = format!("P{}", pos);
@@ -585,6 +648,7 @@ fn create_imposed_page(
     }
 
     // Generate printer's marks if any are enabled
+    // Marks are per-leaf (the entire signature area), not per-page
     let has_marks = options.marks.fold_lines
         || options.marks.cut_lines
         || options.marks.crop_marks
@@ -598,8 +662,10 @@ fn create_imposed_page(
             rows,
             cell_width,
             cell_height,
-            margin_left: margin_fore_edge_pt,
-            margin_bottom: margin_bottom_pt,
+            leaf_left,
+            leaf_bottom,
+            leaf_right,
+            leaf_top,
         };
         let marks_content = generate_marks(&options.marks, &marks_config);
         content_ops.push(marks_content);

@@ -144,10 +144,18 @@ async fn create_test_output(
     options.output_paper_size = paper_size;
     options.scaling_mode = ScalingMode::Fit;
     options.margins = Margins {
-        top_mm: 10.0,
-        bottom_mm: 10.0,
-        fore_edge_mm: 8.0,
-        spine_mm: 12.0,
+        sheet: SheetMargins {
+            top_mm: 5.0,
+            bottom_mm: 5.0,
+            left_mm: 5.0,
+            right_mm: 5.0,
+        },
+        leaf: LeafMargins {
+            top_mm: 5.0,
+            bottom_mm: 5.0,
+            fore_edge_mm: 3.0,
+            spine_mm: 7.0,
+        },
     };
     // Enable printer's marks
     options.marks = PrinterMarks {

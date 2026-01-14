@@ -82,10 +82,18 @@ async fn main() -> Result<()> {
 
     // Set margins to make them visible
     options.margins = Margins {
-        top_mm: 15.0,
-        bottom_mm: 15.0,
-        fore_edge_mm: 10.0,
-        spine_mm: 20.0, // Larger spine margin to see the effect
+        sheet: SheetMargins {
+            top_mm: 10.0,
+            bottom_mm: 10.0,
+            left_mm: 10.0,
+            right_mm: 10.0,
+        },
+        leaf: LeafMargins {
+            top_mm: 5.0,
+            bottom_mm: 5.0,
+            fore_edge_mm: 5.0,
+            spine_mm: 15.0, // Larger spine margin to see the effect
+        },
     };
 
     // Perform imposition
@@ -98,8 +106,12 @@ async fn main() -> Result<()> {
     println!("  Front side (sheet 1): pages 8, 1, 2, 7 (pages 8,1 rotated 180°)");
     println!("  Back side (sheet 1):  pages 6, 3, 4, 5 (pages 4,5 rotated 180°)");
     println!("\nMargins:");
-    println!("  Spine (inner): {}mm", options.margins.spine_mm);
-    println!("  Fore-edge (outer): {}mm", options.margins.fore_edge_mm);
+    println!(
+        "  Sheet margins: {}mm all sides (printer-safe area)",
+        options.margins.sheet.top_mm
+    );
+    println!("  Leaf spine (gutter): {}mm", options.margins.leaf.spine_mm);
+    println!("  Leaf fore-edge: {}mm", options.margins.leaf.fore_edge_mm);
     println!("\nPages should be pushed toward the spine (center), not centered.");
 
     Ok(())

@@ -321,8 +321,46 @@ impl<'a> MarginsEditor<'a> {
     }
 }
 
-/// Professional margins editor (printing terminology)
-pub struct PrintMarginsEditor<'a> {
+/// Sheet margins editor (printer-safe area - uniform sides)
+pub struct SheetMarginsEditor<'a> {
+    top: &'a mut f32,
+    bottom: &'a mut f32,
+    left: &'a mut f32,
+    right: &'a mut f32,
+    max: f32,
+}
+
+impl<'a> SheetMarginsEditor<'a> {
+    pub fn new(
+        top: &'a mut f32,
+        bottom: &'a mut f32,
+        left: &'a mut f32,
+        right: &'a mut f32,
+        max: f32,
+    ) -> Self {
+        Self {
+            top,
+            bottom,
+            left,
+            right,
+            max,
+        }
+    }
+
+    pub fn show(self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+
+        changed |= labeled_drag_clamped(ui, "Top:", self.top, 0.0..=self.max, " mm");
+        changed |= labeled_drag_clamped(ui, "Bottom:", self.bottom, 0.0..=self.max, " mm");
+        changed |= labeled_drag_clamped(ui, "Left:", self.left, 0.0..=self.max, " mm");
+        changed |= labeled_drag_clamped(ui, "Right:", self.right, 0.0..=self.max, " mm");
+
+        changed
+    }
+}
+
+/// Leaf margins editor (trim and gutter - bookbinding terminology)
+pub struct LeafMarginsEditor<'a> {
     top: &'a mut f32,
     bottom: &'a mut f32,
     fore_edge: &'a mut f32,
@@ -330,7 +368,7 @@ pub struct PrintMarginsEditor<'a> {
     max: f32,
 }
 
-impl<'a> PrintMarginsEditor<'a> {
+impl<'a> LeafMarginsEditor<'a> {
     pub fn new(
         top: &'a mut f32,
         bottom: &'a mut f32,
@@ -351,12 +389,9 @@ impl<'a> PrintMarginsEditor<'a> {
         let mut changed = false;
 
         changed |= labeled_drag_clamped(ui, "Top (head):", self.top, 0.0..=self.max, " mm");
-
         changed |= labeled_drag_clamped(ui, "Bottom (tail):", self.bottom, 0.0..=self.max, " mm");
-
         changed |= labeled_drag_clamped(ui, "Fore edge:", self.fore_edge, 0.0..=self.max, " mm");
-
-        changed |= labeled_drag_clamped(ui, "Spine:", self.spine, 0.0..=self.max, " mm");
+        changed |= labeled_drag_clamped(ui, "Spine (gutter):", self.spine, 0.0..=self.max, " mm");
 
         changed
     }

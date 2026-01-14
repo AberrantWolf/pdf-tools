@@ -16,7 +16,18 @@ pub enum ImposeError {
 
 pub type Result<T> = std::result::Result<T, ImposeError>;
 
-/// Paper sizes in millimeters (width, height)
+/// Paper orientation
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Orientation {
+    /// Portrait: height > width (default for most paper sizes)
+    #[default]
+    Portrait,
+    /// Landscape: width > height
+    Landscape,
+}
+
+/// Standard paper sizes
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PaperSize {
     A3,
@@ -29,6 +40,7 @@ pub enum PaperSize {
 }
 
 impl PaperSize {
+    /// Get base dimensions (always portrait: width < height for standard sizes)
     pub fn dimensions_mm(self) -> (f32, f32) {
         match self {
             PaperSize::A3 => (297.0, 420.0),
@@ -41,6 +53,15 @@ impl PaperSize {
                 width_mm,
                 height_mm,
             } => (width_mm, height_mm),
+        }
+    }
+
+    /// Get dimensions with orientation applied
+    pub fn dimensions_with_orientation(self, orientation: Orientation) -> (f32, f32) {
+        let (w, h) = self.dimensions_mm();
+        match orientation {
+            Orientation::Portrait => (w, h),
+            Orientation::Landscape => (h, w),
         }
     }
 }
@@ -130,27 +151,85 @@ impl Rotation {
     }
 }
 
-/// Margins for page layout
+/// Sheet margins - printer-safe area around the entire output sheet.
+/// These margins ensure content stays within the printer's printable area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SheetMargins {
+    /// Top margin of the sheet
+    pub top_mm: f32,
+    /// Bottom margin of the sheet
+    pub bottom_mm: f32,
+    /// Left margin of the sheet
+    pub left_mm: f32,
+    /// Right margin of the sheet
+    pub right_mm: f32,
+}
+
+impl Default for SheetMargins {
+    fn default() -> Self {
+        Self {
+            top_mm: 5.0,
+            bottom_mm: 5.0,
+            left_mm: 5.0,
+            right_mm: 5.0,
+        }
+    }
+}
+
+impl SheetMargins {
+    /// Create uniform margins on all sides
+    pub fn uniform(margin_mm: f32) -> Self {
+        Self {
+            top_mm: margin_mm,
+            bottom_mm: margin_mm,
+            left_mm: margin_mm,
+            right_mm: margin_mm,
+        }
+    }
+}
+
+/// Leaf margins - applied to each logical page within the imposed sheet.
+/// These provide trim space for the binder and spine gutter for readability.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LeafMargins {
+    /// Top margin (head) of each leaf
+    pub top_mm: f32,
+    /// Bottom margin (tail) of each leaf
+    pub bottom_mm: f32,
+    /// Outer margin (fore edge) - the edge that gets trimmed
+    pub fore_edge_mm: f32,
+    /// Inner margin (spine/gutter) - extra space near the binding
+    pub spine_mm: f32,
+}
+
+impl Default for LeafMargins {
+    fn default() -> Self {
+        Self {
+            top_mm: 5.0,
+            bottom_mm: 5.0,
+            fore_edge_mm: 5.0,
+            spine_mm: 10.0,
+        }
+    }
+}
+
+/// Combined margins for imposition - both sheet-level and leaf-level
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Margins {
-    /// Top margin (head)
-    pub top_mm: f32,
-    /// Bottom margin (tail)
-    pub bottom_mm: f32,
-    /// Outer margin (fore edge)
-    pub fore_edge_mm: f32,
-    /// Inner margin (spine)
-    pub spine_mm: f32,
+    /// Printer-safe margins around the entire output sheet
+    pub sheet: SheetMargins,
+    /// Margins for each logical page/leaf (trim and gutter)
+    pub leaf: LeafMargins,
 }
 
 impl Default for Margins {
     fn default() -> Self {
         Self {
-            top_mm: 10.0,
-            bottom_mm: 10.0,
-            fore_edge_mm: 10.0,
-            spine_mm: 15.0,
+            sheet: SheetMargins::default(),
+            leaf: LeafMargins::default(),
         }
     }
 }

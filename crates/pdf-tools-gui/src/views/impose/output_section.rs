@@ -1,5 +1,5 @@
 use eframe::egui;
-use pdf_impose::{OutputFormat, PaperSize, Rotation, ScalingMode};
+use pdf_impose::{Orientation, OutputFormat, PaperSize, Rotation, ScalingMode};
 
 use super::state::ImposeState;
 use crate::ui_components::{button_group, enum_selector};
@@ -9,6 +9,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut ImposeState) {
         .default_open(true)
         .show(ui, |ui| {
             if show_paper_size_selector(ui, &mut state.options.output_paper_size) {
+                state.needs_regeneration = true;
+            }
+            ui.add_space(5.0);
+
+            if show_orientation_selector(ui, &mut state.options.output_orientation) {
                 state.needs_regeneration = true;
             }
             ui.add_space(5.0);
@@ -40,6 +45,16 @@ fn show_paper_size_selector(ui: &mut egui::Ui, paper_size: &mut PaperSize) -> bo
     ];
 
     enum_selector(ui, "paper_size", "Paper size:", paper_size, &paper_sizes)
+}
+
+fn show_orientation_selector(ui: &mut egui::Ui, orientation: &mut Orientation) -> bool {
+    let orientations = [
+        (Orientation::Portrait, "Portrait"),
+        (Orientation::Landscape, "Landscape"),
+    ];
+
+    ui.label("Orientation:");
+    button_group(ui, orientation, &orientations)
 }
 
 fn show_output_format_selector(ui: &mut egui::Ui, output_format: &mut OutputFormat) -> bool {
