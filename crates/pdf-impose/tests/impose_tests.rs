@@ -148,8 +148,8 @@ async fn test_impose_signature_basic() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // 8 pages / 4 pages per sheet = 2 sheets * 2 sides = 4 output pages
-    assert_eq!(output.get_pages().len(), 4);
+    // Quarto: 8 pages per signature = 1 signature = 1 sheet with 4 pages per side = 2 output pages
+    assert_eq!(output.get_pages().len(), 2);
 }
 
 #[tokio::test]
@@ -225,7 +225,7 @@ async fn test_impose_folio() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // 4 pages / 4 pages per sheet = 1 sheet * 2 sides = 2 output pages
+    // Folio: 4 pages per signature = 1 signature = 1 sheet with 2 pages per side = 2 output pages
     assert_eq!(output.get_pages().len(), 2);
 }
 
@@ -240,8 +240,8 @@ async fn test_impose_octavo() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // 16 pages / 4 pages per sheet = 4 sheets * 2 sides = 8 output pages
-    assert_eq!(output.get_pages().len(), 8);
+    // Octavo: 16 pages per signature = 1 signature = 1 sheet with 8 pages per side = 2 output pages
+    assert_eq!(output.get_pages().len(), 2);
 }
 
 #[tokio::test]
@@ -257,8 +257,8 @@ async fn test_impose_with_custom_arrangement() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // 12 pages / 4 pages per sheet = 3 sheets * 2 sides = 6 output pages
-    assert_eq!(output.get_pages().len(), 6);
+    // Custom: 12 pages per signature = 1 signature = 1 sheet with 6 pages per side = 2 output pages
+    assert_eq!(output.get_pages().len(), 2);
 }
 
 #[tokio::test]
@@ -272,7 +272,7 @@ async fn test_impose_side_stitch() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // SideStitch with 6 pages results in 3 output pages
+    // SideStitch: simple 2-up layout, 6 pages = 3 sheets × 2 sides = 3 output pages (alternating front/back)
     assert_eq!(output.get_pages().len(), 3);
 }
 
@@ -287,7 +287,7 @@ async fn test_impose_spiral() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // Spiral with 8 pages results in 4 output pages
+    // Spiral: simple 2-up layout, 8 pages = 4 sheets × 2 sides = 4 output pages (alternating front/back)
     assert_eq!(output.get_pages().len(), 4);
 }
 
@@ -302,8 +302,8 @@ async fn test_impose_case_binding() {
     assert!(result.is_ok());
 
     let output = result.unwrap();
-    // 16 pages / 4 pages per sheet = 4 sheets * 2 sides = 8 output pages
-    assert_eq!(output.get_pages().len(), 8);
+    // CaseBinding uses default Quarto: 16 pages = 2 signatures × 8 pages = 2 sheets × 2 sides = 4 output pages
+    assert_eq!(output.get_pages().len(), 4);
 }
 
 #[tokio::test]
@@ -339,4 +339,112 @@ async fn test_full_workflow() {
 
     // Verify output exists
     assert!(output_path.exists());
+}
+
+// Test correct page ordering for traditional bookbinding formats
+// These tests verify the actual page sequence matches traditional bookbinding standards
+
+#[test]
+fn test_folio_page_order() {
+    // Folio: 1 fold = 4 pages per signature
+    // Traditional order: [4, 1, 2, 3]
+    // Arranged as: Front: [4, 1], Back: [2, 3]
+    use pdf_impose::impose::calculate_signature_order;
+
+    let order = calculate_signature_order(4, 4);
+
+    // Side A: [4, 1], Side B: [2, 3] (no mirroring for folio)
+    assert_eq!(order.len(), 4);
+    assert_eq!(order[0], Some(3)); // Side A left: page 4
+    assert_eq!(order[1], Some(0)); // Side A right: page 1
+    assert_eq!(order[2], Some(1)); // Side B left: page 2
+    assert_eq!(order[3], Some(2)); // Side B right: page 3
+}
+
+#[test]
+fn test_quarto_page_order() {
+    // Quarto: 2 folds = 8 pages per signature
+    // Based on Wikipedia diagram:
+    // Side A: Top [5↓, 4↓], Bottom [8, 1]
+    // Side B: Top [3↓, 6↓], Bottom [2, 7] - mirrored for duplex printing
+    // Grid order is: top-left, top-right, bottom-left, bottom-right
+    use pdf_impose::impose::calculate_signature_order;
+
+    let order = calculate_signature_order(8, 8);
+
+    assert_eq!(order.len(), 8);
+
+    // Side A: [5, 4, 8, 1] (top-left, top-right, bottom-left, bottom-right)
+    assert_eq!(order[0], Some(4)); // page 5 (0-indexed = 4)
+    assert_eq!(order[1], Some(3)); // page 4 (0-indexed = 3)
+    assert_eq!(order[2], Some(7)); // page 8 (0-indexed = 7)
+    assert_eq!(order[3], Some(0)); // page 1 (0-indexed = 0)
+
+    // Side B: [3, 6, 2, 7] - mirrored for duplex
+    assert_eq!(order[4], Some(2)); // page 3 (0-indexed = 2)
+    assert_eq!(order[5], Some(5)); // page 6 (0-indexed = 5)
+    assert_eq!(order[6], Some(1)); // page 2 (0-indexed = 1)
+    assert_eq!(order[7], Some(6)); // page 7 (0-indexed = 6)
+}
+
+#[test]
+fn test_octavo_page_order() {
+    // Octavo: 3 folds = 16 pages per signature
+    // Based on Wikipedia diagram:
+    // Side A: Top [5, 12, 9, 8], Bottom [4, 13, 16, 1]
+    // Side B: Top [6, 11, 10, 7], Bottom [3, 14, 15, 2]
+    // Grid order is row-major: top row left-to-right, then bottom row
+    use pdf_impose::impose::calculate_signature_order;
+
+    let order = calculate_signature_order(16, 16);
+
+    assert_eq!(order.len(), 16);
+
+    // Expected sequence (0-indexed):
+    // Side A top:    [5, 12, 9, 8]  -> [4, 11, 8, 7]
+    // Side A bottom: [4, 13, 16, 1] -> [3, 12, 15, 0]
+    // Side B top:    [7, 10, 11, 6] -> [6, 9, 10, 5] (mirrored for duplex)
+    // Side B bottom: [2, 15, 14, 3] -> [1, 14, 13, 2] (mirrored for duplex)
+    let expected = vec![
+        4, 11, 8, 7, // Side A top row
+        3, 12, 15, 0, // Side A bottom row
+        6, 9, 10, 5, // Side B top row (mirrored)
+        1, 14, 13, 2, // Side B bottom row (mirrored)
+    ];
+
+    for (i, &expected_page) in expected.iter().enumerate() {
+        assert_eq!(
+            order[i],
+            Some(expected_page),
+            "Mismatch at position {}: expected page {}, got {:?}",
+            i,
+            expected_page + 1,
+            order[i].map(|p| p + 1)
+        );
+    }
+}
+
+#[test]
+fn test_multiple_signatures() {
+    // Test with 2 quarto signatures (16 pages total)
+    // Each signature follows the quarto pattern
+    use pdf_impose::impose::calculate_signature_order;
+
+    let order = calculate_signature_order(16, 8);
+
+    assert_eq!(order.len(), 16);
+
+    // First signature: pages 1-8 (indices 0-7)
+    // Side A: [5, 4, 8, 1] -> [4, 3, 7, 0]
+    assert_eq!(order[0], Some(4)); // page 5
+    assert_eq!(order[1], Some(3)); // page 4
+    assert_eq!(order[2], Some(7)); // page 8
+    assert_eq!(order[3], Some(0)); // page 1
+
+    // Second signature: pages 9-16 (indices 8-15)
+    // Side A: [13, 12, 16, 9] -> [12, 11, 15, 8]
+    assert_eq!(order[8], Some(12)); // page 13
+    assert_eq!(order[9], Some(11)); // page 12
+    assert_eq!(order[10], Some(15)); // page 16
+    assert_eq!(order[11], Some(8)); // page 9
 }

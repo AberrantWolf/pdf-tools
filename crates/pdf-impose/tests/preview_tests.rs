@@ -62,8 +62,9 @@ async fn test_generate_preview_basic() {
     assert!(preview.is_ok());
 
     let output = preview.unwrap();
-    // 20 pages with Quarto (8 per signature) padded to 24 / 4 pages per sheet = 6 sheets * 2 sides = 12 pages
-    assert_eq!(output.get_pages().len(), 12);
+    // 20 pages with Quarto (8 per signature) = 3 signatures, but preview limited to 2 signatures
+    // 2 signatures × 2 output pages per signature = 4 output pages
+    assert_eq!(output.get_pages().len(), 4);
 }
 
 #[tokio::test]
@@ -87,8 +88,12 @@ async fn test_generate_preview_different_sheet_counts() {
         assert!(preview.is_ok(), "Failed with max_sheets: {}", max_sheets);
 
         let output = preview.unwrap();
-        // 16 pages with default Quarto (8 per signature) / 4 pages per sheet = 4 sheets * 2 sides = 8 pages
-        assert_eq!(output.get_pages().len(), 8);
+        // 16 pages with default Quarto (8 per signature)
+        // max_sheets signatures, each with 2 output pages
+        // Limited to available: min(max_sheets, 2 total signatures)
+        let expected_sigs = max_sheets.min(2);
+        let expected_pages = expected_sigs * 2;
+        assert_eq!(output.get_pages().len(), expected_pages);
     }
 }
 
@@ -103,8 +108,9 @@ async fn test_generate_preview_perfect_binding() {
     assert!(preview.is_ok());
 
     let output = preview.unwrap();
-    // 12 pages with PerfectBinding / 2 pages per sheet = 6 sheets * 2 sides = 12 pages (no padding needed)
-    assert_eq!(output.get_pages().len(), 6);
+    // 12 pages with PerfectBinding, limited to 3 sheets = 3 * 2 = 6 source pages
+    // 6 source pages with 2-up layout = 3 output pages
+    assert_eq!(output.get_pages().len(), 3);
 }
 
 #[tokio::test]
@@ -118,6 +124,8 @@ async fn test_generate_preview_octavo() {
     assert!(preview.is_ok());
 
     let output = preview.unwrap();
-    // 32 pages with Octavo (16 per signature) / 4 pages per sheet = 8 sheets * 2 sides = 16 pages
-    assert_eq!(output.get_pages().len(), 16);
+    // 32 pages with Octavo (16 per signature) = 2 signatures
+    // Each signature = 1 sheet with 2 output pages (front + back)
+    // 2 signatures × 2 output pages = 4 output pages total
+    assert_eq!(output.get_pages().len(), 4);
 }

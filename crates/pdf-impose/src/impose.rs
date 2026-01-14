@@ -1,6 +1,7 @@
 use crate::options::ImpositionOptions;
 use crate::types::*;
 use lopdf::{Dictionary, Document, Object, Stream};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Load a single PDF document
@@ -81,7 +82,11 @@ fn merge_documents(documents: &[Document]) -> Result<Document> {
 }
 
 fn add_flyleaves(mut doc: Document, front: usize, back: usize) -> Result<Document> {
-    // Get page size from first page
+    if front == 0 && back == 0 {
+        return Ok(doc);
+    }
+
+    // Get existing page information
     let pages = doc.get_pages();
     if pages.is_empty() {
         return Ok(doc);
@@ -95,29 +100,75 @@ fn add_flyleaves(mut doc: Document, front: usize, back: usize) -> Result<Documen
         _ => return Err(ImposeError::Config("MediaBox is not an array".to_string())),
     };
 
-    // Create blank pages with same dimensions
+    // Get the pages root
+    let catalog_id = doc.trailer.get(b"Root")?.as_reference()?;
+    let catalog = doc.get_dictionary(catalog_id)?;
+    let pages_id = catalog.get(b"Pages")?.as_reference()?;
+
+    // Get existing page references - clone immediately to release borrow
+    let kids = {
+        let pages_dict = doc.get_dictionary(pages_id)?;
+        if let Ok(Object::Array(arr)) = pages_dict.get(b"Kids") {
+            arr.clone()
+        } else {
+            return Err(ImposeError::Config(
+                "Pages Kids array not found".to_string(),
+            ));
+        }
+    };
+
+    // Create front flyleaves and insert at beginning
+    let mut front_pages = Vec::new();
     for _ in 0..front {
-        create_blank_page(&mut doc, &media_box)?;
+        let blank_page_id = create_blank_page(&mut doc, &media_box, pages_id)?;
+        front_pages.push(Object::Reference(blank_page_id));
     }
 
-    // Add back flyleaves at end (would need to append to page tree)
+    // Create back flyleaves
+    let mut back_pages = Vec::new();
     for _ in 0..back {
-        create_blank_page(&mut doc, &media_box)?;
+        let blank_page_id = create_blank_page(&mut doc, &media_box, pages_id)?;
+        back_pages.push(Object::Reference(blank_page_id));
     }
+
+    // Rebuild kids array: front flyleaves + existing pages + back flyleaves
+    let mut new_kids = Vec::new();
+    new_kids.extend(front_pages);
+    new_kids.extend(kids);
+    new_kids.extend(back_pages);
+
+    // Update the pages dictionary with new kids array and count
+    let count = new_kids.len() as i64;
+    let pages_dict = doc.get_dictionary(pages_id)?;
+    let mut updated_pages_dict = pages_dict.clone();
+    updated_pages_dict.set("Count", Object::Integer(count));
+    updated_pages_dict.set("Kids", Object::Array(new_kids));
+
+    doc.objects
+        .insert(pages_id, Object::Dictionary(updated_pages_dict));
 
     Ok(doc)
 }
 
-fn create_blank_page(doc: &mut Document, media_box: &[Object]) -> Result<()> {
+fn create_blank_page(
+    doc: &mut Document,
+    media_box: &[Object],
+    parent_id: lopdf::ObjectId,
+) -> Result<lopdf::ObjectId> {
+    // Create an empty content stream
+    let content_stream = Stream::new(Dictionary::new(), Vec::new());
+    let content_id = doc.add_object(content_stream);
+
+    // Create the page dictionary
     let mut page_dict = Dictionary::new();
     page_dict.set("Type", Object::Name(b"Page".to_vec()));
+    page_dict.set("Parent", Object::Reference(parent_id));
     page_dict.set("MediaBox", Object::Array(media_box.to_vec()));
-    page_dict.set("Contents", doc.new_object_id());
+    page_dict.set("Contents", Object::Reference(content_id));
+    page_dict.set("Resources", Object::Dictionary(Dictionary::new()));
 
-    let _ = doc.new_object_id();
-    // Would need to properly insert into page tree
-
-    Ok(())
+    let page_id = doc.add_object(page_dict);
+    Ok(page_id)
 }
 
 fn impose_signature(doc: &Document, options: &ImpositionOptions) -> Result<Document> {
@@ -137,30 +188,115 @@ fn impose_signature(doc: &Document, options: &ImpositionOptions) -> Result<Docum
     impose_with_order(doc, &page_ids, &page_order, options)
 }
 
-fn calculate_signature_order(total_pages: usize, pages_per_sig: usize) -> Vec<Option<usize>> {
+/// Calculate the correct page order for signature binding using traditional bookbinding layout.
+///
+/// Based on Wikipedia diagrams for traditional bookbinding:
+///
+/// **Folio (4 pages, 1 fold):**
+/// - Side A: [4, 1] (left=4, right=1)
+/// - Side B: [2, 3] (left=2, right=3)
+/// - No rotation needed
+///
+/// **Quarto (8 pages, 2 folds):**
+/// - Side A: Top [5↓, 4↓], Bottom [8, 1]
+/// - Side B: Top [6↓, 3↓], Bottom [7, 2]
+/// - Top row rotated 180°
+///
+/// **Octavo (16 pages, 3 folds):**
+/// - Side A: Top [5↓, 12↓, 9↓, 8↓], Bottom [4, 13, 16, 1]
+/// - Side B: Top [6↓, 11↓, 10↓, 7↓], Bottom [3, 14, 15, 2]
+/// - Top row rotated 180°
+///
+/// Returns pages grouped by output sheet side, ready for grid placement.
+/// For quarto: [side_a_top_left, side_a_top_right, side_a_bottom_left, side_a_bottom_right,
+///              side_b_top_left, side_b_top_right, side_b_bottom_left, side_b_bottom_right]
+pub fn calculate_signature_order(total_pages: usize, pages_per_sig: usize) -> Vec<Option<usize>> {
     let num_signatures = total_pages / pages_per_sig;
-    let sheets_per_sig = pages_per_sig / 4;
-
     let mut order = Vec::with_capacity(total_pages);
 
     for sig_num in 0..num_signatures {
         let sig_start = sig_num * pages_per_sig;
 
-        // For each sheet in the signature
-        for sheet_num in 0..sheets_per_sig {
-            // Front of sheet (outer pages, right to left)
-            let outer_right = sig_start + (pages_per_sig - 1) - (sheet_num * 2);
-            let outer_left = sig_start + (sheet_num * 2);
+        let sig_order: Vec<usize> = match pages_per_sig {
+            4 => {
+                // Folio: Side A [4, 1], Side B [2, 3]
+                // No mirroring needed - folio is a simple 2-up with one fold
+                // Positions: [left, right] for each side
+                vec![
+                    sig_start + 3, // Side A left: page 4
+                    sig_start + 0, // Side A right: page 1
+                    sig_start + 1, // Side B left: page 2
+                    sig_start + 2, // Side B right: page 3
+                ]
+            }
+            8 => {
+                // Quarto: Side A top [5,4], bottom [8,1]; Side B top [3,6], bottom [2,7]
+                // Grid order: top-left, top-right, bottom-left, bottom-right
+                // Side B is horizontally mirrored because the paper flips for duplex printing
+                vec![
+                    sig_start + 4, // Side A top-left: page 5
+                    sig_start + 3, // Side A top-right: page 4
+                    sig_start + 7, // Side A bottom-left: page 8
+                    sig_start + 0, // Side A bottom-right: page 1
+                    sig_start + 2, // Side B top-left: page 3 (mirrored)
+                    sig_start + 5, // Side B top-right: page 6 (mirrored)
+                    sig_start + 1, // Side B bottom-left: page 2 (mirrored)
+                    sig_start + 6, // Side B bottom-right: page 7 (mirrored)
+                ]
+            }
+            16 => {
+                // Octavo: 4 cols × 2 rows per side
+                // Side A: Top [5,12,9,8], Bottom [4,13,16,1]
+                // Side B: Top [7,10,11,6], Bottom [1,16,13,4] - mirrored for duplex
+                // Wait, that's wrong. Side B has different pages.
+                // Side B (per Wikipedia): Top [6,11,10,7], Bottom [3,14,15,2]
+                // Mirrored: Top [7,10,11,6], Bottom [2,15,14,3]
+                vec![
+                    // Side A - top row (left to right)
+                    sig_start + 4,  // page 5
+                    sig_start + 11, // page 12
+                    sig_start + 8,  // page 9
+                    sig_start + 7,  // page 8
+                    // Side A - bottom row (left to right)
+                    sig_start + 3,  // page 4
+                    sig_start + 12, // page 13
+                    sig_start + 15, // page 16
+                    sig_start + 0,  // page 1
+                    // Side B - top row (mirrored: right to left becomes left to right)
+                    sig_start + 6,  // page 7
+                    sig_start + 9,  // page 10
+                    sig_start + 10, // page 11
+                    sig_start + 5,  // page 6
+                    // Side B - bottom row (mirrored)
+                    sig_start + 1,  // page 2
+                    sig_start + 14, // page 15
+                    sig_start + 13, // page 14
+                    sig_start + 2,  // page 3
+                ]
+            }
+            _ => {
+                // Generic algorithm for custom page counts
+                // Uses the traditional saddle-stitch pattern
+                let sheets = pages_per_sig / 4;
+                let mut pages = Vec::with_capacity(pages_per_sig);
+                for i in 0..sheets {
+                    let last = pages_per_sig - 1 - (2 * i);
+                    let first = 2 * i;
+                    pages.push(sig_start + last);
+                    pages.push(sig_start + first);
+                    pages.push(sig_start + first + 1);
+                    pages.push(sig_start + last - 1);
+                }
+                pages
+            }
+        };
 
-            order.push(Some(outer_right));
-            order.push(Some(outer_left));
-
-            // Back of sheet (inner pages, left to right)
-            let inner_left = sig_start + (sheet_num * 2) + 1;
-            let inner_right = sig_start + (pages_per_sig - 2) - (sheet_num * 2);
-
-            order.push(Some(inner_left));
-            order.push(Some(inner_right));
+        for page_idx in sig_order {
+            if page_idx < total_pages {
+                order.push(Some(page_idx));
+            } else {
+                order.push(None);
+            }
         }
     }
 
@@ -201,108 +337,81 @@ fn impose_with_order(
     let output_width_pt = mm_to_pt(output_width);
     let output_height_pt = mm_to_pt(output_height);
 
-    // Pages per sheet (2 for most bindings)
-    let pages_per_sheet = 2;
-
     // Create page tree root ID
     let pages_id = output.new_object_id();
 
     let mut page_refs = Vec::new();
 
-    // Process pages in chunks
-    for chunk in page_order.chunks(pages_per_sheet) {
-        // Create new output page
-        let mut page_dict = Dictionary::new();
-        page_dict.set("Type", Object::Name(b"Page".to_vec()));
-        page_dict.set("Parent", Object::Reference(pages_id));
-        page_dict.set(
-            "MediaBox",
-            Object::Array(vec![
-                Object::Integer(0),
-                Object::Integer(0),
-                Object::Real(output_width_pt),
-                Object::Real(output_height_pt),
-            ]),
-        );
+    // Determine chunking based on binding type
+    match options.binding_type {
+        BindingType::Signature | BindingType::CaseBinding => {
+            // Signature binding: all pages of a signature go on one sheet (2 sides)
+            let pages_per_sig = options.page_arrangement.pages_per_signature();
+            let pages_per_side = pages_per_sig / 2;
 
-        // Build content stream that places source pages
-        let mut content_ops = Vec::new();
-        let mut resources = Dictionary::new();
-        let mut xobjects = Dictionary::new();
+            for chunk in page_order.chunks(pages_per_sig) {
+                // Process front of sheet
+                if !chunk.is_empty() {
+                    let front_pages_end = pages_per_side.min(chunk.len());
+                    let front_page = create_imposed_page(
+                        &mut output,
+                        doc,
+                        page_ids,
+                        &chunk[0..front_pages_end],
+                        output_width_pt,
+                        output_height_pt,
+                        pages_id,
+                        options,
+                        true, // is_front
+                    )?;
+                    page_refs.push(Object::Reference(front_page));
+                }
 
-        for (pos, page_idx_opt) in chunk.iter().enumerate() {
-            if let Some(page_idx) = page_idx_opt {
-                if *page_idx < page_ids.len() {
-                    let source_page_id = page_ids[*page_idx];
-
-                    // Get source page dimensions
-                    if let Ok(source_dict) = doc.get_dictionary(source_page_id) {
-                        let media_box = source_dict
-                            .get(b"MediaBox")
-                            .and_then(|obj| obj.as_array())
-                            .ok();
-
-                        if let Some(mb) = media_box {
-                            let src_width = extract_number(&mb[2]).unwrap_or(612.0);
-                            let src_height = extract_number(&mb[3]).unwrap_or(792.0);
-
-                            // Calculate position and scale
-                            let target_width = output_width_pt / pages_per_sheet as f32;
-                            let x_offset = pos as f32 * target_width;
-
-                            let scale = calculate_scale(
-                                src_width,
-                                src_height,
-                                target_width,
-                                output_height_pt,
-                                options.scaling_mode,
-                            );
-
-                            // Center the scaled page within its target area
-                            let scaled_width = src_width * scale;
-                            let scaled_height = src_height * scale;
-                            let x_center = x_offset + (target_width - scaled_width) / 2.0;
-                            let y_center = (output_height_pt - scaled_height) / 2.0;
-
-                            // Create XObject from source page
-                            let xobject_name = format!("P{}", pos);
-                            let xobject_id = create_page_xobject(&mut output, doc, source_page_id)?;
-                            xobjects.set(xobject_name.as_bytes(), Object::Reference(xobject_id));
-
-                            // Add transformation matrix and XObject reference to content stream
-                            content_ops.push(format!(
-                                "q {} 0 0 {} {} {} cm /{} Do Q\n",
-                                scale, scale, x_center, y_center, xobject_name
-                            ));
-                        }
-                    }
+                // Process back of sheet
+                if chunk.len() > pages_per_side {
+                    let back_page = create_imposed_page(
+                        &mut output,
+                        doc,
+                        page_ids,
+                        &chunk[pages_per_side..],
+                        output_width_pt,
+                        output_height_pt,
+                        pages_id,
+                        options,
+                        false, // is_back
+                    )?;
+                    page_refs.push(Object::Reference(back_page));
                 }
             }
         }
-
-        // Set up resources dictionary
-        resources.set("XObject", Object::Dictionary(xobjects));
-
-        // Create content stream
-        let content = content_ops.join("");
-        let content_id = output.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
-
-        page_dict.set("Contents", Object::Reference(content_id));
-        page_dict.set("Resources", Object::Dictionary(resources));
-
-        // Add page to document
-        let page_id = output.add_object(page_dict);
-        page_refs.push(Object::Reference(page_id));
+        BindingType::PerfectBinding | BindingType::SideStitch | BindingType::Spiral => {
+            // Simple 2-up binding: 2 pages per output page (side by side)
+            // Each output page is one side of a sheet
+            for chunk in page_order.chunks(2) {
+                if !chunk.is_empty() {
+                    let page = create_imposed_page(
+                        &mut output,
+                        doc,
+                        page_ids,
+                        chunk,
+                        output_width_pt,
+                        output_height_pt,
+                        pages_id,
+                        options,
+                        true, // Doesn't matter for 2-up, no flipping needed
+                    )?;
+                    page_refs.push(Object::Reference(page));
+                }
+            }
+        }
     }
 
     // Create pages tree
+    let count = page_refs.len() as i64;
     let pages_dict = Dictionary::from_iter(vec![
         ("Type", Object::Name(b"Pages".to_vec())),
         ("Kids", Object::Array(page_refs)),
-        (
-            "Count",
-            Object::Integer(page_order.chunks(pages_per_sheet).len() as i64),
-        ),
+        ("Count", Object::Integer(count)),
     ]);
     output
         .objects
@@ -319,11 +428,183 @@ fn impose_with_order(
     Ok(output)
 }
 
+fn create_imposed_page(
+    output: &mut Document,
+    source: &Document,
+    page_ids: &[lopdf::ObjectId],
+    page_chunk: &[Option<usize>],
+    output_width_pt: f32,
+    output_height_pt: f32,
+    parent_pages_id: lopdf::ObjectId,
+    options: &ImpositionOptions,
+    is_front: bool,
+) -> Result<lopdf::ObjectId> {
+    // Create new output page
+    let mut page_dict = Dictionary::new();
+    page_dict.set("Type", Object::Name(b"Page".to_vec()));
+    page_dict.set("Parent", Object::Reference(parent_pages_id));
+    page_dict.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(output_width_pt),
+            Object::Real(output_height_pt),
+        ]),
+    );
+
+    // Build content stream that places source pages
+    let mut content_ops = Vec::new();
+    let mut resources = Dictionary::new();
+    let mut xobjects = Dictionary::new();
+
+    // Determine layout based on number of pages
+    // For signature binding with multiple pages per side, arrange in grid
+    let num_pages = page_chunk.len();
+
+    let (cols, rows) = match num_pages {
+        1 => (1, 1),
+        2 => (2, 1), // Folio: 2 cols × 1 row
+        4 => (2, 2), // Quarto: 2 cols × 2 rows
+        8 => (4, 2), // Octavo: 4 cols × 2 rows
+        _ => {
+            // For other sizes, prefer wider layouts
+            let cols = if num_pages >= 8 { 4 } else { 2 };
+            let rows = (num_pages + cols - 1) / cols;
+            (cols, rows)
+        }
+    };
+
+    // Convert margins from mm to pt
+    let margin_spine_pt = mm_to_pt(options.margins.spine_mm);
+    let margin_fore_edge_pt = mm_to_pt(options.margins.fore_edge_mm);
+    let margin_top_pt = mm_to_pt(options.margins.top_mm);
+    let margin_bottom_pt = mm_to_pt(options.margins.bottom_mm);
+
+    // For book imposition:
+    // - Vertical margins (top/bottom) apply to the entire output page once
+    // - Horizontal margins are asymmetric per column (fore-edge vs spine)
+    //
+    // Each column in a 2-column layout represents one page of the booklet:
+    // - Left column: [fore-edge margin] [content] [spine margin]
+    // - Right column: [spine margin] [content] [fore-edge margin]
+
+    let content_height = output_height_pt - margin_top_pt - margin_bottom_pt;
+    let cell_height = content_height / rows as f32;
+
+    for (pos, page_idx_opt) in page_chunk.iter().enumerate() {
+        if let Some(page_idx) = page_idx_opt {
+            if *page_idx < page_ids.len() {
+                let source_page_id = page_ids[*page_idx];
+
+                // Get source page dimensions
+                if let Ok(source_dict) = source.get_dictionary(source_page_id) {
+                    let media_box = source_dict
+                        .get(b"MediaBox")
+                        .and_then(|obj| obj.as_array())
+                        .ok();
+
+                    if let Some(mb) = media_box {
+                        let src_width = extract_number(&mb[2]).unwrap_or(612.0);
+                        let src_height = extract_number(&mb[3]).unwrap_or(792.0);
+
+                        // Calculate grid position
+                        // Pages are provided in row-major order: row 0 left-to-right, then row 1, etc.
+                        let col = pos % cols;
+                        let row = pos / cols;
+
+                        // Calculate cell dimensions
+                        // Simple grid: divide page evenly, apply margins to outer edges
+                        let content_width = output_width_pt - margin_fore_edge_pt * 2.0;
+                        let cell_width = content_width / cols as f32;
+                        let cell_x_start = margin_fore_edge_pt + (col as f32 * cell_width);
+
+                        // Calculate scale to fit within cell
+                        let scale = calculate_scale(
+                            src_width,
+                            src_height,
+                            cell_width,
+                            cell_height,
+                            options.scaling_mode,
+                        );
+
+                        let scaled_width = src_width * scale;
+                        let scaled_height = src_height * scale;
+
+                        // Calculate Y position for this row (PDF y=0 is at bottom)
+                        let y_cell_offset = (rows - row - 1) as f32 * cell_height;
+
+                        // Center the scaled page within its cell
+                        let x_pos = cell_x_start + (cell_width - scaled_width) / 2.0;
+                        let y_pos =
+                            margin_bottom_pt + y_cell_offset + (cell_height - scaled_height) / 2.0;
+
+                        // Determine if this page needs 180° rotation
+                        // Based on Wikipedia diagrams:
+                        // - Folio: no rotation needed
+                        // - Quarto: top row (row 0) is rotated 180°
+                        // - Octavo: top row (row 0) is rotated 180°
+                        let needs_rotation = match options.page_arrangement {
+                            PageArrangement::Folio => false,
+                            PageArrangement::Quarto | PageArrangement::Octavo => row == 0,
+                            PageArrangement::Custom { .. } => false,
+                        };
+
+                        // Create XObject from source page
+                        let xobject_name = format!("P{}", pos);
+                        let mut cache = HashMap::new();
+                        let xobject_id =
+                            create_page_xobject(output, source, source_page_id, &mut cache)?;
+                        xobjects.set(xobject_name.as_bytes(), Object::Reference(xobject_id));
+
+                        // Add transformation matrix and XObject reference to content stream
+                        if needs_rotation {
+                            // For 180° rotation, we need to:
+                            // 1. Translate to rotation point (center of page)
+                            // 2. Rotate 180°
+                            // 3. Scale
+                            // Matrix for 180° rotation is: [-1 0 0 -1 tx ty]
+                            // We want to rotate around the center of the scaled page
+                            let rot_x = x_pos + scaled_width;
+                            let rot_y = y_pos + scaled_height;
+
+                            content_ops.push(format!(
+                                "q {} 0 0 {} {} {} cm /{} Do Q\n",
+                                -scale, -scale, rot_x, rot_y, xobject_name
+                            ));
+                        } else {
+                            content_ops.push(format!(
+                                "q {} 0 0 {} {} {} cm /{} Do Q\n",
+                                scale, scale, x_pos, y_pos, xobject_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Set up resources dictionary
+    resources.set("XObject", Object::Dictionary(xobjects));
+
+    // Create content stream
+    let content = content_ops.join("");
+    let content_id = output.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+
+    page_dict.set("Contents", Object::Reference(content_id));
+    page_dict.set("Resources", Object::Dictionary(resources));
+
+    // Add page to document
+    let page_id = output.add_object(page_dict);
+    Ok(page_id)
+}
+
 /// Create an XObject from a source page by copying all its resources
 fn create_page_xobject(
     output: &mut Document,
     source: &Document,
     page_id: lopdf::ObjectId,
+    cache: &mut HashMap<lopdf::ObjectId, lopdf::ObjectId>,
 ) -> Result<lopdf::ObjectId> {
     let page_dict = source.get_dictionary(page_id)?;
 
@@ -352,9 +633,12 @@ fn create_page_xobject(
     xobject_dict.set("BBox", Object::Array(media_box));
     xobject_dict.set("FormType", Object::Integer(1));
 
-    // Copy resources if present
+    // Copy resources if present, using a cache to avoid duplicating objects
     if let Ok(resources) = page_dict.get(b"Resources") {
-        xobject_dict.set("Resources", copy_object_deep(output, source, resources)?);
+        xobject_dict.set(
+            "Resources",
+            copy_object_deep(output, source, resources, cache)?,
+        );
     }
 
     // Create XObject with content stream
@@ -371,7 +655,11 @@ fn get_page_content(doc: &Document, page_dict: &Dictionary) -> Result<Vec<u8>> {
         Object::Reference(id) => {
             // Single content stream
             if let Ok(stream) = doc.get_object(*id)?.as_stream() {
-                Ok(stream.decompressed_content()?)
+                // Try decompressed first, but fall back to raw content if no compression
+                match stream.decompressed_content() {
+                    Ok(content) => Ok(content),
+                    Err(_) => Ok(stream.content.clone()),
+                }
             } else {
                 Ok(Vec::new())
             }
@@ -382,7 +670,12 @@ fn get_page_content(doc: &Document, page_dict: &Dictionary) -> Result<Vec<u8>> {
             for obj in arr {
                 if let Object::Reference(id) = obj {
                     if let Ok(stream) = doc.get_object(*id)?.as_stream() {
-                        result.extend_from_slice(&stream.decompressed_content()?);
+                        // Try decompressed first, but fall back to raw content if no compression
+                        let content = match stream.decompressed_content() {
+                            Ok(c) => c,
+                            Err(_) => stream.content.clone(),
+                        };
+                        result.extend_from_slice(&content);
                         result.push(b'\n');
                     }
                 }
@@ -394,34 +687,49 @@ fn get_page_content(doc: &Document, page_dict: &Dictionary) -> Result<Vec<u8>> {
 }
 
 /// Deep copy an object from source to output document, following references
-fn copy_object_deep(output: &mut Document, source: &Document, obj: &Object) -> Result<Object> {
+/// Uses a cache to avoid copying the same object multiple times
+fn copy_object_deep(
+    output: &mut Document,
+    source: &Document,
+    obj: &Object,
+    cache: &mut HashMap<lopdf::ObjectId, lopdf::ObjectId>,
+) -> Result<Object> {
     match obj {
         Object::Reference(id) => {
+            // Check if we've already copied this object
+            if let Some(&new_id) = cache.get(id) {
+                return Ok(Object::Reference(new_id));
+            }
+
             // Get the referenced object and copy it
             let referenced = source.get_object(*id)?;
-            let copied = copy_object_deep(output, source, referenced)?;
-            // Add the copied object to output and return a reference to it
+            let copied = copy_object_deep(output, source, referenced, cache)?;
+
+            // Add the copied object to output and cache the mapping
             let new_id = output.add_object(copied);
+            cache.insert(*id, new_id);
+
             Ok(Object::Reference(new_id))
         }
         Object::Dictionary(dict) => {
             let mut new_dict = Dictionary::new();
             for (key, value) in dict.iter() {
-                new_dict.set(key.clone(), copy_object_deep(output, source, value)?);
+                new_dict.set(key.clone(), copy_object_deep(output, source, value, cache)?);
             }
             Ok(Object::Dictionary(new_dict))
         }
         Object::Array(arr) => {
             let mut new_arr = Vec::new();
             for item in arr {
-                new_arr.push(copy_object_deep(output, source, item)?);
+                new_arr.push(copy_object_deep(output, source, item, cache)?);
             }
             Ok(Object::Array(new_arr))
         }
         Object::Stream(stream) => {
             let mut new_dict = Dictionary::new();
             for (key, value) in stream.dict.iter() {
-                new_dict.set(key.clone(), copy_object_deep(output, source, value)?);
+                // Recursively copy dictionary entries, which may contain indirect references
+                new_dict.set(key.clone(), copy_object_deep(output, source, value, cache)?);
             }
             Ok(Object::Stream(Stream {
                 dict: new_dict,

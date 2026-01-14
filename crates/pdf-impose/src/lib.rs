@@ -1,4 +1,4 @@
-mod impose;
+pub mod impose;
 mod options;
 mod preview;
 mod stats;
