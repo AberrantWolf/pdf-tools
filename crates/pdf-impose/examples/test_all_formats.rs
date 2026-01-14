@@ -149,6 +149,15 @@ async fn create_test_output(
         fore_edge_mm: 8.0,
         spine_mm: 12.0,
     };
+    // Enable printer's marks
+    options.marks = PrinterMarks {
+        fold_lines: true,
+        cut_lines: true,
+        crop_marks: true,
+        registration_marks: true,
+        sewing_marks: false,
+        spine_marks: false,
+    };
 
     // Perform imposition
     let imposed = impose(&[source_doc], &options).await?;

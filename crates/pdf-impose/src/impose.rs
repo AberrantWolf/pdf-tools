@@ -1,3 +1,4 @@
+use crate::marks::{MarksConfig, generate_marks};
 use crate::options::ImpositionOptions;
 use crate::types::*;
 use lopdf::{Dictionary, Document, Object, Stream};
@@ -437,7 +438,7 @@ fn create_imposed_page(
     output_height_pt: f32,
     parent_pages_id: lopdf::ObjectId,
     options: &ImpositionOptions,
-    is_front: bool,
+    _is_front: bool,
 ) -> Result<lopdf::ObjectId> {
     // Create new output page
     let mut page_dict = Dictionary::new();
@@ -476,7 +477,7 @@ fn create_imposed_page(
     };
 
     // Convert margins from mm to pt
-    let margin_spine_pt = mm_to_pt(options.margins.spine_mm);
+    let _margin_spine_pt = mm_to_pt(options.margins.spine_mm);
     let margin_fore_edge_pt = mm_to_pt(options.margins.fore_edge_mm);
     let margin_top_pt = mm_to_pt(options.margins.top_mm);
     let margin_bottom_pt = mm_to_pt(options.margins.bottom_mm);
@@ -489,7 +490,9 @@ fn create_imposed_page(
     // - Left column: [fore-edge margin] [content] [spine margin]
     // - Right column: [spine margin] [content] [fore-edge margin]
 
+    let content_width = output_width_pt - margin_fore_edge_pt * 2.0;
     let content_height = output_height_pt - margin_top_pt - margin_bottom_pt;
+    let cell_width = content_width / cols as f32;
     let cell_height = content_height / rows as f32;
 
     for (pos, page_idx_opt) in page_chunk.iter().enumerate() {
@@ -513,10 +516,7 @@ fn create_imposed_page(
                         let col = pos % cols;
                         let row = pos / cols;
 
-                        // Calculate cell dimensions
-                        // Simple grid: divide page evenly, apply margins to outer edges
-                        let content_width = output_width_pt - margin_fore_edge_pt * 2.0;
-                        let cell_width = content_width / cols as f32;
+                        // Calculate cell position
                         let cell_x_start = margin_fore_edge_pt + (col as f32 * cell_width);
 
                         // Calculate scale to fit within cell
@@ -582,6 +582,27 @@ fn create_imposed_page(
                 }
             }
         }
+    }
+
+    // Generate printer's marks if any are enabled
+    let has_marks = options.marks.fold_lines
+        || options.marks.cut_lines
+        || options.marks.crop_marks
+        || options.marks.registration_marks
+        || options.marks.sewing_marks
+        || options.marks.spine_marks;
+
+    if has_marks {
+        let marks_config = MarksConfig {
+            cols,
+            rows,
+            cell_width,
+            cell_height,
+            margin_left: margin_fore_edge_pt,
+            margin_bottom: margin_bottom_pt,
+        };
+        let marks_content = generate_marks(&options.marks, &marks_config);
+        content_ops.push(marks_content);
     }
 
     // Set up resources dictionary

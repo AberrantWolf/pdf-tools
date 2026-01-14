@@ -159,9 +159,11 @@ impl Default for Margins {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PrinterMarks {
-    /// Add fold lines
+    /// Add fold lines (dashed) - where paper should be folded
     pub fold_lines: bool,
-    /// Add cut lines (crop marks)
+    /// Add cut lines (solid with scissors symbol) - where paper should be cut after folding
+    pub cut_lines: bool,
+    /// Add crop marks (L-shaped corner marks)
     pub crop_marks: bool,
     /// Add registration marks
     pub registration_marks: bool,
