@@ -1,5 +1,5 @@
 use lopdf::Document;
-use pdf_async_runtime::{ImpositionOptions, ImpositionStatistics, PdfUpdate};
+use pdf_async_runtime::{ImpositionOptions, PdfUpdate};
 use pdf_impose::{calculate_statistics, generate_preview, impose, load_multiple_pdfs, save_pdf};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -9,29 +9,74 @@ use tokio::sync::mpsc;
 static NEXT_DOC_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub struct ImposeDocStore {
-    documents: HashMap<u64, Document>,
+    /// Preview documents stored by ID
+    preview_documents: HashMap<u64, Document>,
+    /// Cached source documents by input file paths (to avoid reloading)
+    source_cache: Option<SourceDocCache>,
+}
+
+/// Cache for source documents to avoid reloading on every preview
+struct SourceDocCache {
+    /// The input file paths that were used to load these documents
+    paths: Vec<PathBuf>,
+    /// The loaded documents
+    documents: Vec<Document>,
 }
 
 impl ImposeDocStore {
     pub fn new() -> Self {
         Self {
-            documents: HashMap::new(),
+            preview_documents: HashMap::new(),
+            source_cache: None,
         }
     }
 
     pub fn store(&mut self, doc: Document) -> u64 {
         let id = NEXT_DOC_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.documents.insert(id, doc);
+        self.preview_documents.insert(id, doc);
         id
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, id: u64) -> Option<&Document> {
-        self.documents.get(&id)
+        self.preview_documents.get(&id)
     }
 
     #[allow(dead_code)]
     pub fn remove(&mut self, id: u64) -> Option<Document> {
-        self.documents.remove(&id)
+        self.preview_documents.remove(&id)
+    }
+
+    /// Get cached source documents if the paths match, otherwise load and cache
+    pub async fn get_or_load_sources(
+        &mut self,
+        paths: &[PathBuf],
+    ) -> Result<&[Document], pdf_impose::ImposeError> {
+        // Check if cache is valid (same paths in same order)
+        let cache_valid = self
+            .source_cache
+            .as_ref()
+            .map(|c| c.paths == paths)
+            .unwrap_or(false);
+
+        if !cache_valid {
+            log::debug!("Loading source documents (cache miss or paths changed)");
+            let documents = load_multiple_pdfs(paths).await?;
+            self.source_cache = Some(SourceDocCache {
+                paths: paths.to_vec(),
+                documents,
+            });
+        } else {
+            log::debug!("Using cached source documents");
+        }
+
+        Ok(&self.source_cache.as_ref().unwrap().documents)
+    }
+
+    /// Clear the source cache (e.g., when files change)
+    #[allow(dead_code)]
+    pub fn clear_source_cache(&mut self) {
+        self.source_cache = None;
     }
 }
 
@@ -70,9 +115,9 @@ pub async fn handle_generate_preview(
         return;
     }
 
-    // Load documents
+    // Get cached documents or load them (avoids reloading on every preview)
     let paths: Vec<PathBuf> = options.input_files.iter().cloned().collect();
-    let documents = match load_multiple_pdfs(&paths).await {
+    let documents = match doc_store.get_or_load_sources(&paths).await {
         Ok(docs) => docs,
         Err(e) => {
             let _ = update_tx.send(PdfUpdate::Error {
@@ -82,8 +127,13 @@ pub async fn handle_generate_preview(
         }
     };
 
+    // Calculate and send statistics
+    if let Ok(stats) = calculate_statistics(documents, &options) {
+        let _ = update_tx.send(PdfUpdate::ImposeStatsCalculated { stats });
+    }
+
     // Generate preview (first signature or reasonable sample)
-    let preview = match generate_preview(&documents, &options, 4).await {
+    let preview = match generate_preview(documents, &options, 4).await {
         Ok(doc) => doc,
         Err(e) => {
             let _ = update_tx.send(PdfUpdate::Error {

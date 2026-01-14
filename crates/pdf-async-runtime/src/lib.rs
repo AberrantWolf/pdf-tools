@@ -43,6 +43,11 @@ pub enum PdfCommand {
         doc_id: DocumentId,
         page_index: usize,
     },
+    /// Prefetch pages for faster navigation (lower priority than direct renders)
+    ViewerPrefetchPages {
+        doc_id: DocumentId,
+        page_indices: Vec<usize>,
+    },
     ViewerClose {
         doc_id: DocumentId,
     },

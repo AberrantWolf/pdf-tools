@@ -121,6 +121,64 @@ pub async fn handle_render_page(
     }
 }
 
+/// Prefetch pages into cache without sending updates to UI
+/// This runs silently in the background to warm the cache
+#[cfg(feature = "pdf-viewer")]
+pub async fn handle_prefetch_pages(
+    doc_id: DocumentId,
+    page_indices: Vec<usize>,
+    state: &mut ViewerState,
+) {
+    for page_index in page_indices {
+        let cache_key = (doc_id, page_index);
+
+        // Skip if already cached
+        if state.get_from_cache(&cache_key).is_some() {
+            continue;
+        }
+
+        if let Some(pdf_path) = state.get_document(&doc_id).cloned() {
+            // Render to cache silently (no UI update)
+            match tokio::task::spawn_blocking(move || {
+                let pdfium = init_pdfium()?;
+                let document = pdfium.load_pdf_from_file(&pdf_path, None)?;
+                let page = document.pages().get(page_index as u16)?;
+
+                let config = PdfRenderConfig::new()
+                    .set_target_width(600)
+                    .set_maximum_height(800);
+
+                let bitmap = page.render_with_config(&config)?;
+                let rgba_data = bitmap.as_rgba_bytes().to_vec();
+                let width = bitmap.width() as usize;
+                let height = bitmap.height() as usize;
+
+                Ok::<_, PdfiumError>((rgba_data, width, height))
+            })
+            .await
+            {
+                Ok(Ok((rgba_data, width, height))) => {
+                    state.add_to_cache(
+                        cache_key,
+                        CachedPage {
+                            rgba_data,
+                            width,
+                            height,
+                        },
+                    );
+                    log::debug!("Prefetched page {} into cache", page_index);
+                }
+                Ok(Err(e)) => {
+                    log::warn!("Failed to prefetch page {}: {}", page_index, e);
+                }
+                Err(e) => {
+                    log::warn!("Prefetch task join error for page {}: {}", page_index, e);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(feature = "pdf-viewer")]
 pub async fn handle_close(
     doc_id: DocumentId,

@@ -221,10 +221,11 @@ impl eframe::App for PdfToolsApp {
                     });
                 }
                 PdfUpdate::ViewerPageRendered {
+                    doc_id,
+                    page_index,
                     rgba_data,
                     width,
                     height,
-                    ..
                 } => {
                     let color_image =
                         egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba_data);
@@ -264,6 +265,44 @@ impl eframe::App for PdfToolsApp {
                                 egui::TextureOptions::default(),
                             ));
                         }
+                    }
+
+                    // Prefetch adjacent pages for faster navigation
+                    let total_pages = self
+                        .viewer_state
+                        .as_ref()
+                        .map(|s| s.total_pages)
+                        .or_else(|| {
+                            self.flashcard_state
+                                .preview_viewer
+                                .as_ref()
+                                .map(|s| s.total_pages)
+                        })
+                        .or_else(|| {
+                            self.impose_state
+                                .preview_viewer
+                                .as_ref()
+                                .map(|s| s.total_pages)
+                        })
+                        .unwrap_or(0);
+
+                    let mut prefetch_pages = Vec::new();
+                    if page_index > 0 {
+                        prefetch_pages.push(page_index - 1);
+                    }
+                    if page_index + 1 < total_pages {
+                        prefetch_pages.push(page_index + 1);
+                    }
+                    // Also prefetch 2 pages ahead for smoother forward navigation
+                    if page_index + 2 < total_pages {
+                        prefetch_pages.push(page_index + 2);
+                    }
+
+                    if !prefetch_pages.is_empty() {
+                        let _ = self.command_tx.send(PdfCommand::ViewerPrefetchPages {
+                            doc_id,
+                            page_indices: prefetch_pages,
+                        });
                     }
 
                     self.progress = None;

@@ -242,14 +242,12 @@ pub struct PrinterMarks {
     pub fold_lines: bool,
     /// Add cut lines (solid with scissors symbol) - where paper should be cut after folding
     pub cut_lines: bool,
-    /// Add crop marks (L-shaped corner marks)
+    /// Add crop marks (L-shaped corner marks at sheet edges)
     pub crop_marks: bool,
+    /// Add trim marks (L-shaped corner marks at each leaf/cell boundary)
+    pub trim_marks: bool,
     /// Add registration marks
     pub registration_marks: bool,
-    /// Add sewing marks for sewn bindings
-    pub sewing_marks: bool,
-    /// Add spine marks for signature ordering
-    pub spine_marks: bool,
 }
 
 /// Split output options

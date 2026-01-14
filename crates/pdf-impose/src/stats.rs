@@ -13,8 +13,8 @@ pub fn calculate_statistics(
         source_pages += doc.get_pages().len();
     }
 
-    // Add flyleaves
-    source_pages += options.front_flyleaves + options.back_flyleaves;
+    // Add flyleaves (each flyleaf = 1 leaf = 2 pages)
+    source_pages += (options.front_flyleaves + options.back_flyleaves) * 2;
 
     if source_pages == 0 {
         return Err(ImposeError::NoPages);

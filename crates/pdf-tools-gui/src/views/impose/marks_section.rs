@@ -1,5 +1,4 @@
 use eframe::egui;
-use pdf_impose::BindingType;
 
 use super::state::ImposeState;
 
@@ -19,7 +18,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut ImposeState) {
                 )
                 .changed();
             changed |= ui
-                .checkbox(&mut state.options.marks.crop_marks, "Crop marks")
+                .checkbox(
+                    &mut state.options.marks.crop_marks,
+                    "Crop marks (sheet edges)",
+                )
+                .changed();
+            changed |= ui
+                .checkbox(&mut state.options.marks.trim_marks, "Trim marks (per leaf)")
                 .changed();
             changed |= ui
                 .checkbox(
@@ -28,24 +33,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut ImposeState) {
                 )
                 .changed();
 
-            if is_signature_binding(&state.options.binding_type) {
-                changed |= ui
-                    .checkbox(&mut state.options.marks.sewing_marks, "Sewing marks")
-                    .changed();
-                changed |= ui
-                    .checkbox(
-                        &mut state.options.marks.spine_marks,
-                        "Spine marks (signature order)",
-                    )
-                    .changed();
-            }
-
             if changed {
                 state.needs_regeneration = true;
             }
         });
-}
-
-fn is_signature_binding(binding: &BindingType) -> bool {
-    matches!(binding, BindingType::Signature | BindingType::CaseBinding)
 }

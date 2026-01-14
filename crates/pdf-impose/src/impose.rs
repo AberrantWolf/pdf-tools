@@ -1,4 +1,4 @@
-use crate::marks::{MarksConfig, generate_marks};
+use crate::marks::{ContentBounds, MarksConfig, generate_marks};
 use crate::options::ImpositionOptions;
 use crate::types::*;
 use lopdf::{Dictionary, Document, Object, Stream};
@@ -49,7 +49,7 @@ fn impose_sync(documents: &[Document], options: &ImpositionOptions) -> Result<Do
     // Merge all input documents into a single source
     let mut merged = merge_documents(documents)?;
 
-    // Add flyleaves
+    // Add flyleaves (each flyleaf = 1 leaf = 2 pages)
     if options.front_flyleaves > 0 || options.back_flyleaves > 0 {
         merged = add_flyleaves(merged, options.front_flyleaves, options.back_flyleaves)?;
     }
@@ -118,16 +118,19 @@ fn add_flyleaves(mut doc: Document, front: usize, back: usize) -> Result<Documen
         }
     };
 
-    // Create front flyleaves and insert at beginning
+    // A flyleaf is a single leaf (one sheet of paper) with 2 pages (front and back)
+    const PAGES_PER_LEAF: usize = 2;
+
+    // Create front flyleaves
     let mut front_pages = Vec::new();
-    for _ in 0..front {
+    for _ in 0..(front * PAGES_PER_LEAF) {
         let blank_page_id = create_blank_page(&mut doc, &media_box, pages_id)?;
         front_pages.push(Object::Reference(blank_page_id));
     }
 
     // Create back flyleaves
     let mut back_pages = Vec::new();
-    for _ in 0..back {
+    for _ in 0..(back * PAGES_PER_LEAF) {
         let blank_page_id = create_blank_page(&mut doc, &media_box, pages_id)?;
         back_pages.push(Object::Reference(blank_page_id));
     }
@@ -503,6 +506,9 @@ fn create_imposed_page(
     let cell_width = leaf_width / cols as f32;
     let cell_height = leaf_height / rows as f32;
 
+    // Collect content bounds for trim marks
+    let mut content_bounds: Vec<ContentBounds> = Vec::with_capacity(page_chunk.len());
+
     for (pos, page_idx_opt) in page_chunk.iter().enumerate() {
         if let Some(page_idx) = page_idx_opt {
             if *page_idx < page_ids.len() {
@@ -528,63 +534,96 @@ fn create_imposed_page(
                         let cell_x = leaf_left + (col as f32 * cell_width);
                         let cell_y = leaf_bottom + ((rows - row - 1) as f32 * cell_height);
 
-                        // Calculate margins for this cell based on its position and arrangement
-                        // After folding, the spine is at the center of the sheet
+                        // Calculate margins for this cell based on its position, arrangement, and orientation
+                        // The spine position depends on how the sheet is folded:
                         //
-                        // Folio (2 cols): spine between col 0 and 1
-                        //   Col 0: fore-edge left, spine right
-                        //   Col 1: spine left, fore-edge right
+                        // Portrait (height > width):
+                        //   Folio: fold left-to-right, spine is vertical between cols
+                        //   Quarto: fold top-to-bottom then left-to-right, spine is vertical between cols
                         //
-                        // Quarto (2 cols × 2 rows): same horizontal as folio
-                        //   Top row is rotated 180°, so margins flip vertically for those cells
+                        // Landscape (width > height):
+                        //   Folio: fold left-to-right (along long edge), spine is vertical between cols
+                        //   Quarto: fold left-to-right then top-to-bottom, spine is HORIZONTAL between rows
                         //
-                        // Octavo (4 cols × 2 rows): center cut between cols 1 and 2
-                        //   After cutting, each half is like a quarto
-                        //   Left half (cols 0,1): spine between cols 0 and 1
-                        //   Right half (cols 2,3): spine between cols 2 and 3
-                        //   Col 0: fore-edge left, spine right
-                        //   Col 1: spine left, fore-edge right (outer edge of left booklet)
-                        //   Col 2: fore-edge left (outer edge of right booklet), spine right
-                        //   Col 3: spine left, fore-edge right
-                        //
-                        // Note: cols 1 and 2 have fore-edge toward the center cut
+                        // The key insight: in landscape quarto, the spine runs horizontally (between rows)
+                        // rather than vertically (between columns)
 
-                        let (margin_left, margin_right) = match cols {
-                            2 => {
-                                // Folio or Quarto: spine in center
-                                if col == 0 {
-                                    (leaf_fore_edge_pt, leaf_spine_pt)
-                                } else {
-                                    (leaf_spine_pt, leaf_fore_edge_pt)
-                                }
-                            }
-                            4 => {
-                                // Octavo: two spines, cut in center
-                                match col {
-                                    0 => (leaf_fore_edge_pt, leaf_spine_pt), // left booklet, left page
-                                    1 => (leaf_spine_pt, leaf_fore_edge_pt), // left booklet, right page (fore-edge at cut)
-                                    2 => (leaf_fore_edge_pt, leaf_spine_pt), // right booklet, left page (fore-edge at cut)
-                                    3 => (leaf_spine_pt, leaf_fore_edge_pt), // right booklet, right page
-                                    _ => (leaf_fore_edge_pt, leaf_fore_edge_pt),
-                                }
-                            }
-                            _ => {
-                                // Generic: use average margins
-                                let avg = (leaf_fore_edge_pt + leaf_spine_pt) / 2.0;
-                                (avg, avg)
-                            }
-                        };
+                        let is_landscape = output_width_pt > output_height_pt;
+                        let is_quarto = matches!(options.page_arrangement, PageArrangement::Quarto);
 
-                        // Vertical margins: top/bottom of the final page
-                        // For rotated pages (top row in quarto/octavo), the margins swap
+                        // For landscape quarto, spine is horizontal (between rows)
+                        // For all other cases, spine is vertical (between cols)
+                        let spine_is_horizontal = is_landscape && is_quarto;
+
+                        // Determine if this cell needs 180° rotation
+                        // For quarto/octavo, the top row is rotated 180°
                         let needs_rotation = match options.page_arrangement {
                             PageArrangement::Folio => false,
                             PageArrangement::Quarto | PageArrangement::Octavo => row == 0,
                             PageArrangement::Custom { .. } => false,
                         };
 
-                        let (margin_bottom, margin_top) = if needs_rotation {
-                            // Page will be rotated 180°, so top becomes bottom
+                        let (margin_left, margin_right) = if spine_is_horizontal {
+                            // Landscape quarto: spine is between rows, so left/right are fore-edges
+                            (leaf_fore_edge_pt, leaf_fore_edge_pt)
+                        } else {
+                            // Vertical spine (between columns)
+                            // Base margins before considering rotation:
+                            //   Col 0 (left): fore-edge on left, spine on right
+                            //   Col 1 (right): spine on left, fore-edge on right
+                            let (base_left, base_right) = match cols {
+                                2 => {
+                                    // Folio or Portrait Quarto: spine in center (vertical)
+                                    if col == 0 {
+                                        (leaf_fore_edge_pt, leaf_spine_pt)
+                                    } else {
+                                        (leaf_spine_pt, leaf_fore_edge_pt)
+                                    }
+                                }
+                                4 => {
+                                    // Octavo: two spines, cut in center
+                                    match col {
+                                        0 => (leaf_fore_edge_pt, leaf_spine_pt),
+                                        1 => (leaf_spine_pt, leaf_fore_edge_pt),
+                                        2 => (leaf_fore_edge_pt, leaf_spine_pt),
+                                        3 => (leaf_spine_pt, leaf_fore_edge_pt),
+                                        _ => (leaf_fore_edge_pt, leaf_fore_edge_pt),
+                                    }
+                                }
+                                _ => {
+                                    let avg = (leaf_fore_edge_pt + leaf_spine_pt) / 2.0;
+                                    (avg, avg)
+                                }
+                            };
+
+                            // For rotated pages, left/right swap because the page is upside down
+                            if needs_rotation {
+                                (base_right, base_left)
+                            } else {
+                                (base_left, base_right)
+                            }
+                        };
+
+                        // Vertical margins: top/bottom of the final page
+                        let (margin_bottom, margin_top) = if spine_is_horizontal {
+                            // Landscape quarto: spine/fold is horizontal between the two rows
+                            // The fold line is at the boundary between row 0 and row 1
+                            //
+                            // Row 0 (top of sheet): bottom edge is at the fold → spine margin at bottom
+                            // Row 1 (bottom of sheet): top edge is at the fold → spine margin at top
+                            //
+                            // Note: rotation doesn't affect which physical edge is near the fold,
+                            // it only affects how the content is oriented within the cell.
+                            // The margin is about the CELL position, not the content orientation.
+                            if row == 0 {
+                                // Top row: fold is at bottom of cell
+                                (leaf_spine_pt, leaf_fore_edge_pt)
+                            } else {
+                                // Bottom row: fold is at top of cell
+                                (leaf_fore_edge_pt, leaf_spine_pt)
+                            }
+                        } else if needs_rotation {
+                            // Portrait with vertical spine: page rotated 180°, so top becomes bottom
                             (leaf_top_pt, leaf_bottom_pt)
                         } else {
                             (leaf_bottom_pt, leaf_top_pt)
@@ -608,10 +647,66 @@ fn create_imposed_page(
                         let scaled_width = src_width * scale;
                         let scaled_height = src_height * scale;
 
-                        // Center the scaled page within its content area
-                        let x_pos = cell_content_left + (cell_content_width - scaled_width) / 2.0;
-                        let y_pos =
-                            cell_content_bottom + (cell_content_height - scaled_height) / 2.0;
+                        // Position the page within the content area, aligned to fold/spine edges.
+                        // Content should be pushed toward folds (where pages meet after folding)
+                        // so that any extra space goes to the outer (fore) edge which gets trimmed.
+                        //
+                        // The content area (cell_content_*) already has margins applied:
+                        // - Spine margins are applied on edges adjacent to folds
+                        // - Fore-edge margins are applied on outer edges
+                        //
+                        // We just need to align within this content area:
+                        // - Push toward the fold edge (spine side)
+                        // - Let extra space accumulate at the fore edge
+
+                        // Determine which edges of this cell are adjacent to folds
+                        // For signature layouts:
+                        //   - Vertical folds: between columns (or at center for octavo)
+                        //   - Horizontal folds: between rows (for quarto/octavo)
+                        let fold_on_right = match cols {
+                            2 => col == 0,             // Left col: fold on right
+                            4 => col == 0 || col == 2, // Octavo: folds after cols 0 and 2
+                            _ => false,
+                        };
+                        let fold_on_left = match cols {
+                            2 => col == 1,             // Right col: fold on left
+                            4 => col == 1 || col == 3, // Octavo: folds before cols 1 and 3
+                            _ => false,
+                        };
+                        let fold_on_bottom = rows > 1 && row == 0; // Top row has fold at bottom
+                        let fold_on_top = rows > 1 && row == rows - 1; // Bottom row has fold at top
+
+                        // Horizontal positioning: align toward the fold edge
+                        let x_pos = if fold_on_right {
+                            // Fold is on right: push content to the right
+                            cell_content_left + cell_content_width - scaled_width
+                        } else if fold_on_left {
+                            // Fold is on left: push content to the left
+                            cell_content_left
+                        } else {
+                            // No horizontal fold (single column): center
+                            cell_content_left + (cell_content_width - scaled_width) / 2.0
+                        };
+
+                        // Vertical positioning: align toward the fold edge
+                        let y_pos = if fold_on_bottom {
+                            // Fold is at bottom: push content down
+                            cell_content_bottom
+                        } else if fold_on_top {
+                            // Fold is at top: push content up
+                            cell_content_bottom + cell_content_height - scaled_height
+                        } else {
+                            // No vertical fold (single row like folio): center
+                            cell_content_bottom + (cell_content_height - scaled_height) / 2.0
+                        };
+
+                        // Record content bounds for trim marks
+                        content_bounds.push(ContentBounds {
+                            x: x_pos,
+                            y: y_pos,
+                            width: scaled_width,
+                            height: scaled_height,
+                        });
 
                         // Create XObject from source page
                         let xobject_name = format!("P{}", pos);
@@ -653,8 +748,7 @@ fn create_imposed_page(
         || options.marks.cut_lines
         || options.marks.crop_marks
         || options.marks.registration_marks
-        || options.marks.sewing_marks
-        || options.marks.spine_marks;
+        || options.marks.trim_marks;
 
     if has_marks {
         let marks_config = MarksConfig {
@@ -666,13 +760,74 @@ fn create_imposed_page(
             leaf_bottom,
             leaf_right,
             leaf_top,
+            content_bounds,
         };
         let marks_content = generate_marks(&options.marks, &marks_config);
         content_ops.push(marks_content);
     }
 
+    // Add page numbers if enabled
+    let mut fonts = Dictionary::new();
+    if options.add_page_numbers {
+        // Create a Helvetica font reference
+        let mut font_dict = Dictionary::new();
+        font_dict.set("Type", Object::Name(b"Font".to_vec()));
+        font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = output.add_object(font_dict);
+        fonts.set("F1", Object::Reference(font_id));
+
+        // Add page numbers to each cell
+        let font_size = 8.0;
+        for (pos, page_idx_opt) in page_chunk.iter().enumerate() {
+            if let Some(page_idx) = page_idx_opt {
+                let page_num = options.page_number_start + *page_idx;
+
+                let col = pos % cols;
+                let row = pos / cols;
+
+                // Cell position
+                let cell_x = leaf_left + (col as f32 * cell_width);
+                let cell_y = leaf_bottom + ((rows - row - 1) as f32 * cell_height);
+
+                // Check if this cell needs rotation
+                let needs_rotation = match options.page_arrangement {
+                    PageArrangement::Folio => false,
+                    PageArrangement::Quarto | PageArrangement::Octavo => row == 0,
+                    PageArrangement::Custom { .. } => false,
+                };
+
+                // Position page number at bottom center of cell
+                let text_x = cell_x + cell_width / 2.0;
+                let text_y = cell_y + 10.0; // 10pt from bottom
+
+                let page_num_text = page_num.to_string();
+
+                if needs_rotation {
+                    // For rotated pages, position is at top (which appears at bottom after rotation)
+                    let rot_text_y = cell_y + cell_height - 10.0;
+                    content_ops.push(format!(
+                        "q 1 0 0 1 {} {} cm -1 0 0 -1 0 0 cm BT /F1 {} Tf ({}) Tj ET Q\n",
+                        text_x, rot_text_y, font_size, page_num_text
+                    ));
+                } else {
+                    // Estimate text width (approximate for centering)
+                    let text_width = page_num_text.len() as f32 * font_size * 0.5;
+                    let centered_x = text_x - text_width / 2.0;
+                    content_ops.push(format!(
+                        "BT /F1 {} Tf {} {} Td ({}) Tj ET\n",
+                        font_size, centered_x, text_y, page_num_text
+                    ));
+                }
+            }
+        }
+    }
+
     // Set up resources dictionary
     resources.set("XObject", Object::Dictionary(xobjects));
+    if !fonts.is_empty() {
+        resources.set("Font", Object::Dictionary(fonts));
+    }
 
     // Create content stream
     let content = content_ops.join("");

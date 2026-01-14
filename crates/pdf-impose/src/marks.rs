@@ -32,6 +32,23 @@ pub struct MarksConfig {
     pub leaf_right: f32,
     /// Top edge of the leaf area in points
     pub leaf_top: f32,
+    /// Content boundaries for each cell (row-major order).
+    /// Each entry is (x, y, width, height) of the actual content in that cell.
+    /// Used for trim marks to show where content actually is, not just cell divisions.
+    pub content_bounds: Vec<ContentBounds>,
+}
+
+/// Bounds of actual content within a cell
+#[derive(Clone, Copy, Default)]
+pub struct ContentBounds {
+    /// X position of content (left edge)
+    pub x: f32,
+    /// Y position of content (bottom edge)
+    pub y: f32,
+    /// Width of content
+    pub width: f32,
+    /// Height of content
+    pub height: f32,
 }
 
 /// Line weight for different mark types (in points)
@@ -68,6 +85,10 @@ pub fn generate_marks(marks: &PrinterMarks, config: &MarksConfig) -> String {
 
     if marks.cut_lines {
         ops.push_str(&generate_cut_lines(config));
+    }
+
+    if marks.trim_marks {
+        ops.push_str(&generate_trim_marks(config));
     }
 
     if marks.crop_marks {
@@ -409,6 +430,149 @@ fn draw_scissors_vertical(x: f32, y: f32) -> String {
     ops
 }
 
+/// Generate trim marks (L-shaped marks at corners of each cell/leaf position)
+/// These marks show where each individual page should be trimmed after folding.
+///
+/// Trim marks are placed at the maximum content extent across all cells,
+/// so varying aspect ratio content gets consistent trim boundaries.
+fn generate_trim_marks(config: &MarksConfig) -> String {
+    let mut ops = String::new();
+
+    // Find maximum content dimensions across all cells
+    // This ensures trim marks encompass all content regardless of aspect ratio
+    let mut max_content_width: f32 = 0.0;
+    let mut max_content_height: f32 = 0.0;
+
+    for bounds in &config.content_bounds {
+        max_content_width = max_content_width.max(bounds.width);
+        max_content_height = max_content_height.max(bounds.height);
+    }
+
+    // If no content bounds provided, fall back to cell dimensions
+    if config.content_bounds.is_empty() || (max_content_width == 0.0 && max_content_height == 0.0) {
+        max_content_width = config.cell_width;
+        max_content_height = config.cell_height;
+    }
+
+    // Set line properties for trim marks
+    ops.push_str(&format!("{} w\n", CROP_MARK_WIDTH));
+    ops.push_str("[] 0 d\n"); // solid line
+
+    // Draw trim marks at content boundaries for each cell
+    // Content is aligned to fold edges, so we calculate trim position per cell
+    for row in 0..config.rows {
+        for col in 0..config.cols {
+            // Cell origin (bottom-left)
+            let cell_x = config.leaf_left + col as f32 * config.cell_width;
+            let cell_y = config.leaf_bottom + (config.rows - row - 1) as f32 * config.cell_height;
+
+            // Determine fold edges for this cell (content is pushed toward folds)
+            let fold_on_right = match config.cols {
+                2 => col == 0,
+                4 => col == 0 || col == 2,
+                _ => false,
+            };
+            let fold_on_left = match config.cols {
+                2 => col == 1,
+                4 => col == 1 || col == 3,
+                _ => false,
+            };
+            let fold_on_bottom = config.rows > 1 && row == 0;
+            let fold_on_top = config.rows > 1 && row == config.rows - 1;
+
+            // Calculate content position based on fold alignment
+            let content_x = if fold_on_right {
+                cell_x + config.cell_width - max_content_width
+            } else if fold_on_left {
+                cell_x
+            } else {
+                cell_x + (config.cell_width - max_content_width) / 2.0
+            };
+
+            let content_y = if fold_on_bottom {
+                cell_y
+            } else if fold_on_top {
+                cell_y + config.cell_height - max_content_height
+            } else {
+                cell_y + (config.cell_height - max_content_height) / 2.0
+            };
+
+            // Content corners
+            let left = content_x;
+            let right = content_x + max_content_width;
+            let bottom = content_y;
+            let top = content_y + max_content_height;
+
+            // Draw L-shaped trim marks at each corner of the content area
+            // Top-left corner
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                left,
+                top + CROP_MARK_GAP,
+                left,
+                top + CROP_MARK_GAP + CROP_MARK_LENGTH
+            ));
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                left - CROP_MARK_GAP,
+                top,
+                left - CROP_MARK_GAP - CROP_MARK_LENGTH,
+                top
+            ));
+
+            // Top-right corner
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                right,
+                top + CROP_MARK_GAP,
+                right,
+                top + CROP_MARK_GAP + CROP_MARK_LENGTH
+            ));
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                right + CROP_MARK_GAP,
+                top,
+                right + CROP_MARK_GAP + CROP_MARK_LENGTH,
+                top
+            ));
+
+            // Bottom-left corner
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                left,
+                bottom - CROP_MARK_GAP,
+                left,
+                bottom - CROP_MARK_GAP - CROP_MARK_LENGTH
+            ));
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                left - CROP_MARK_GAP,
+                bottom,
+                left - CROP_MARK_GAP - CROP_MARK_LENGTH,
+                bottom
+            ));
+
+            // Bottom-right corner
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                right,
+                bottom - CROP_MARK_GAP,
+                right,
+                bottom - CROP_MARK_GAP - CROP_MARK_LENGTH
+            ));
+            ops.push_str(&format!(
+                "{} {} m {} {} l S\n",
+                right + CROP_MARK_GAP,
+                bottom,
+                right + CROP_MARK_GAP + CROP_MARK_LENGTH,
+                bottom
+            ));
+        }
+    }
+
+    ops
+}
+
 /// Generate crop marks (L-shaped marks at corners of the leaf area)
 fn generate_crop_marks(config: &MarksConfig) -> String {
     let mut ops = String::new();
@@ -533,22 +697,28 @@ fn crop_mark_bottom_right_right(x: f32, y: f32) -> String {
     )
 }
 
-/// Generate registration marks (crosshair circles at corners of leaf area)
+/// Generate registration marks (crosshair circles at midpoints of leaf edges)
+/// Registration marks are placed at the center of each edge of the leaf area,
+/// offset slightly outside for visibility without overlapping content.
 fn generate_registration_marks(config: &MarksConfig) -> String {
     let mut ops = String::new();
 
     // Set line properties
     ops.push_str(&format!("{} w\n", REGISTRATION_MARK_WIDTH));
 
-    let offset = CROP_MARK_GAP + CROP_MARK_LENGTH + 5.0; // Position beyond crop marks
+    let offset = CROP_MARK_GAP + REGISTRATION_MARK_SIZE; // Position outside leaf edge
     let half_size = REGISTRATION_MARK_SIZE / 2.0;
 
-    // Draw registration marks at the four corners of the leaf area
+    // Calculate midpoints of each edge
+    let mid_x = (config.leaf_left + config.leaf_right) / 2.0;
+    let mid_y = (config.leaf_top + config.leaf_bottom) / 2.0;
+
+    // Draw registration marks at the midpoint of each edge (standard placement)
     let positions = [
-        (config.leaf_left - offset, config.leaf_top + offset), // Top-left
-        (config.leaf_right + offset, config.leaf_top + offset), // Top-right
-        (config.leaf_left - offset, config.leaf_bottom - offset), // Bottom-left
-        (config.leaf_right + offset, config.leaf_bottom - offset), // Bottom-right
+        (mid_x, config.leaf_top + offset),    // Top center
+        (mid_x, config.leaf_bottom - offset), // Bottom center
+        (config.leaf_left - offset, mid_y),   // Left center
+        (config.leaf_right + offset, mid_y),  // Right center
     ];
 
     for (x, y) in positions {
