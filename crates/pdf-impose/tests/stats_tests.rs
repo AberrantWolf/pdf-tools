@@ -176,13 +176,14 @@ fn test_stats_with_flyleaves() {
 
     let stats = calculate_statistics(&[doc], &options).unwrap();
 
-    // 10 original + 2 front + 2 back = 14 pages
-    assert_eq!(stats.source_pages, 14);
-    // 14 pages padded to 16 (2 signatures of 8 pages each)
-    assert_eq!(stats.blank_pages_added, 2);
-    assert_eq!(stats.signatures, Some(2));
-    assert_eq!(stats.output_sheets, 4);
-    assert_eq!(stats.output_pages, 8);
+    // 10 original + (2 front flyleaves * 2 pages) + (2 back flyleaves * 2 pages) = 18 pages
+    // Each flyleaf is 1 leaf = 2 pages (front and back)
+    assert_eq!(stats.source_pages, 18);
+    // 18 pages padded to 24 (3 signatures of 8 pages each)
+    assert_eq!(stats.blank_pages_added, 6);
+    assert_eq!(stats.signatures, Some(3));
+    assert_eq!(stats.output_sheets, 6); // 3 signatures * 2 sheets per signature
+    assert_eq!(stats.output_pages, 12); // 6 sheets * 2 sides
 }
 
 #[test]

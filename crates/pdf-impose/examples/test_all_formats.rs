@@ -163,8 +163,7 @@ async fn create_test_output(
         cut_lines: true,
         crop_marks: true,
         registration_marks: true,
-        sewing_marks: false,
-        spine_marks: false,
+        trim_marks: false,
     };
 
     // Perform imposition

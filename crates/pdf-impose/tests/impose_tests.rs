@@ -343,17 +343,18 @@ async fn test_full_workflow() {
 
 // Test correct page ordering for traditional bookbinding formats
 // These tests verify the actual page sequence matches traditional bookbinding standards
+// Note: Page ordering tests are now in the layout::signature module.
+// The tests below verify the high-level API behavior.
 
 #[test]
 fn test_folio_page_order() {
     // Folio: 1 fold = 4 pages per signature
-    // Traditional order: [4, 1, 2, 3]
-    // Arranged as: Front: [4, 1], Back: [2, 3]
-    use pdf_impose::impose::calculate_signature_order;
+    use pdf_impose::PageArrangement;
+    use pdf_impose::layout::map_pages_to_slots;
 
-    let order = calculate_signature_order(4, 4);
+    let order = map_pages_to_slots(PageArrangement::Folio, 0, 4);
 
-    // Side A: [4, 1], Side B: [2, 3] (no mirroring for folio)
+    // Side A: [4, 1], Side B: [2, 3]
     assert_eq!(order.len(), 4);
     assert_eq!(order[0], Some(3)); // Side A left: page 4
     assert_eq!(order[1], Some(0)); // Side A right: page 1
@@ -364,13 +365,10 @@ fn test_folio_page_order() {
 #[test]
 fn test_quarto_page_order() {
     // Quarto: 2 folds = 8 pages per signature
-    // Based on Wikipedia diagram:
-    // Side A: Top [5↓, 4↓], Bottom [8, 1]
-    // Side B: Top [3↓, 6↓], Bottom [2, 7] - mirrored for duplex printing
-    // Grid order is: top-left, top-right, bottom-left, bottom-right
-    use pdf_impose::impose::calculate_signature_order;
+    use pdf_impose::PageArrangement;
+    use pdf_impose::layout::map_pages_to_slots;
 
-    let order = calculate_signature_order(8, 8);
+    let order = map_pages_to_slots(PageArrangement::Quarto, 0, 8);
 
     assert_eq!(order.len(), 8);
 
@@ -390,13 +388,10 @@ fn test_quarto_page_order() {
 #[test]
 fn test_octavo_page_order() {
     // Octavo: 3 folds = 16 pages per signature
-    // Based on Wikipedia diagram:
-    // Side A: Top [5, 12, 9, 8], Bottom [4, 13, 16, 1]
-    // Side B: Top [6, 11, 10, 7], Bottom [3, 14, 15, 2]
-    // Grid order is row-major: top row left-to-right, then bottom row
-    use pdf_impose::impose::calculate_signature_order;
+    use pdf_impose::PageArrangement;
+    use pdf_impose::layout::map_pages_to_slots;
 
-    let order = calculate_signature_order(16, 16);
+    let order = map_pages_to_slots(PageArrangement::Octavo, 0, 16);
 
     assert_eq!(order.len(), 16);
 
@@ -408,8 +403,8 @@ fn test_octavo_page_order() {
     let expected = vec![
         4, 11, 8, 7, // Side A top row
         3, 12, 15, 0, // Side A bottom row
-        6, 9, 10, 5, // Side B top row (mirrored)
-        1, 14, 13, 2, // Side B bottom row (mirrored)
+        5, 10, 9, 6, // Side B top row (mirrored)
+        2, 13, 14, 1, // Side B bottom row (mirrored)
     ];
 
     for (i, &expected_page) in expected.iter().enumerate() {
@@ -427,24 +422,25 @@ fn test_octavo_page_order() {
 #[test]
 fn test_multiple_signatures() {
     // Test with 2 quarto signatures (16 pages total)
-    // Each signature follows the quarto pattern
-    use pdf_impose::impose::calculate_signature_order;
+    use pdf_impose::PageArrangement;
+    use pdf_impose::layout::map_pages_to_slots;
 
-    let order = calculate_signature_order(16, 8);
-
-    assert_eq!(order.len(), 16);
+    // First signature
+    let order1 = map_pages_to_slots(PageArrangement::Quarto, 0, 16);
+    // Second signature
+    let order2 = map_pages_to_slots(PageArrangement::Quarto, 8, 16);
 
     // First signature: pages 1-8 (indices 0-7)
     // Side A: [5, 4, 8, 1] -> [4, 3, 7, 0]
-    assert_eq!(order[0], Some(4)); // page 5
-    assert_eq!(order[1], Some(3)); // page 4
-    assert_eq!(order[2], Some(7)); // page 8
-    assert_eq!(order[3], Some(0)); // page 1
+    assert_eq!(order1[0], Some(4)); // page 5
+    assert_eq!(order1[1], Some(3)); // page 4
+    assert_eq!(order1[2], Some(7)); // page 8
+    assert_eq!(order1[3], Some(0)); // page 1
 
     // Second signature: pages 9-16 (indices 8-15)
     // Side A: [13, 12, 16, 9] -> [12, 11, 15, 8]
-    assert_eq!(order[8], Some(12)); // page 13
-    assert_eq!(order[9], Some(11)); // page 12
-    assert_eq!(order[10], Some(15)); // page 16
-    assert_eq!(order[11], Some(8)); // page 9
+    assert_eq!(order2[0], Some(12)); // page 13
+    assert_eq!(order2[1], Some(11)); // page 12
+    assert_eq!(order2[2], Some(15)); // page 16
+    assert_eq!(order2[3], Some(8)); // page 9
 }

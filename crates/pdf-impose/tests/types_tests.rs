@@ -70,6 +70,6 @@ fn test_printer_marks_default() {
     assert!(!marks.fold_lines);
     assert!(!marks.crop_marks);
     assert!(!marks.registration_marks);
-    assert!(!marks.sewing_marks);
-    assert!(!marks.spine_marks);
+    assert!(!marks.cut_lines);
+    assert!(!marks.trim_marks);
 }
