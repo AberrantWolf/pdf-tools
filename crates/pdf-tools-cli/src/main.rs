@@ -104,6 +104,22 @@ enum Commands {
         #[arg(long, default_value = "5.0")]
         sheet_margin: f32,
 
+        /// Leaf spine/gutter margin in mm (inner edge near binding)
+        #[arg(long, default_value = "0.0")]
+        leaf_spine_margin: f32,
+
+        /// Leaf fore-edge margin in mm (outer edge)
+        #[arg(long, default_value = "0.0")]
+        leaf_fore_edge_margin: f32,
+
+        /// Leaf top margin in mm
+        #[arg(long, default_value = "0.0")]
+        leaf_top_margin: f32,
+
+        /// Leaf bottom margin in mm
+        #[arg(long, default_value = "0.0")]
+        leaf_bottom_margin: f32,
+
         /// Show statistics only, don't generate PDF
         #[arg(long)]
         stats_only: bool,
@@ -268,6 +284,10 @@ async fn main() -> Result<()> {
             trim_marks,
             registration_marks,
             sheet_margin,
+            leaf_spine_margin,
+            leaf_fore_edge_margin,
+            leaf_top_margin,
+            leaf_bottom_margin,
             stats_only,
         } => {
             let options = pdf_impose::ImpositionOptions {
@@ -282,7 +302,12 @@ async fn main() -> Result<()> {
                 back_flyleaves,
                 margins: pdf_impose::Margins {
                     sheet: pdf_impose::SheetMargins::uniform(sheet_margin),
-                    ..Default::default()
+                    leaf: pdf_impose::LeafMargins {
+                        top_mm: leaf_top_margin,
+                        bottom_mm: leaf_bottom_margin,
+                        fore_edge_mm: leaf_fore_edge_margin,
+                        spine_mm: leaf_spine_margin,
+                    },
                 },
                 marks: pdf_impose::PrinterMarks {
                     fold_lines,

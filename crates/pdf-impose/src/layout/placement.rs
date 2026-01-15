@@ -31,53 +31,37 @@ pub fn calculate_content_area(
 ) -> Rect {
     let fold_edges = cell_fold_edges(grid, slot.grid_pos);
 
-    // Determine horizontal margins based on fold positions and rotation
-    // The spine margin goes on the edge adjacent to a fold
-    // The fore-edge margin goes on the outer edge
-    let (margin_left, margin_right) = if grid.horizontal_spine {
-        // Landscape quarto: spine is horizontal, so left/right are fore-edges
-        (margins.fore_edge_mm, margins.fore_edge_mm)
+    // Determine horizontal margins based on fold positions
+    // The spine margin goes on the edge adjacent to a fold (where pages meet)
+    // The fore-edge margin goes on the outer/cut edge
+    // Rotation doesn't affect this - margins are applied to the cell, not the content
+    let (margin_left, margin_right) = if fold_edges.right && !fold_edges.left {
+        // Fold on right: spine on right, fore-edge on left
+        (margins.fore_edge_mm, margins.spine_mm)
+    } else if fold_edges.left && !fold_edges.right {
+        // Fold on left: spine on left, fore-edge on right
+        (margins.spine_mm, margins.fore_edge_mm)
+    } else if fold_edges.left && fold_edges.right {
+        // Folds on both sides (octavo inner columns): spine on both
+        (margins.spine_mm, margins.spine_mm)
     } else {
-        // Vertical spine (normal case)
-        let (base_left, base_right) = if fold_edges.right && !fold_edges.left {
-            // Fold on right: spine on right, fore-edge on left
-            (margins.fore_edge_mm, margins.spine_mm)
-        } else if fold_edges.left && !fold_edges.right {
-            // Fold on left: spine on left, fore-edge on right
-            (margins.spine_mm, margins.fore_edge_mm)
-        } else if fold_edges.left && fold_edges.right {
-            // Folds on both sides (octavo inner columns): spine on both
-            (margins.spine_mm, margins.spine_mm)
-        } else {
-            // No horizontal folds: use average
-            let avg = (margins.fore_edge_mm + margins.spine_mm) / 2.0;
-            (avg, avg)
-        };
-
-        // For rotated pages, left/right swap because the page is upside down
-        if slot.rotated {
-            (base_right, base_left)
-        } else {
-            (base_left, base_right)
-        }
+        // No vertical folds: use fore-edge on both (outer edges)
+        (margins.fore_edge_mm, margins.fore_edge_mm)
     };
 
     // Determine vertical margins based on fold positions
-    let (margin_bottom, margin_top) = if grid.horizontal_spine {
-        // Landscape quarto: spine is horizontal between rows
-        if fold_edges.bottom {
-            // Top row: fold at bottom = spine at bottom
-            (margins.spine_mm, margins.fore_edge_mm)
-        } else if fold_edges.top {
-            // Bottom row: fold at top = spine at top
-            (margins.fore_edge_mm, margins.spine_mm)
-        } else {
-            (margins.bottom_mm, margins.top_mm)
-        }
-    } else if slot.rotated {
-        // Portrait with vertical spine: page rotated 180°, so top becomes bottom
-        (margins.top_mm, margins.bottom_mm)
+    // Same logic: spine margin on fold edge, fore-edge on cut/outer edge
+    let (margin_bottom, margin_top) = if fold_edges.bottom && !fold_edges.top {
+        // Fold at bottom: spine on bottom, fore-edge on top
+        (margins.spine_mm, margins.fore_edge_mm)
+    } else if fold_edges.top && !fold_edges.bottom {
+        // Fold at top: spine on top, fore-edge on bottom
+        (margins.fore_edge_mm, margins.spine_mm)
+    } else if fold_edges.top && fold_edges.bottom {
+        // Folds on both (unlikely but handle it)
+        (margins.spine_mm, margins.spine_mm)
     } else {
+        // No horizontal folds: use top/bottom margins
         (margins.bottom_mm, margins.top_mm)
     };
 

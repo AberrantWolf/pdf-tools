@@ -433,141 +433,99 @@ fn draw_scissors_vertical(x: f32, y: f32) -> String {
 /// Generate trim marks (L-shaped marks at corners of each cell/leaf position)
 /// These marks show where each individual page should be trimmed after folding.
 ///
-/// Trim marks are placed at the maximum content extent across all cells,
-/// so varying aspect ratio content gets consistent trim boundaries.
+/// Trim marks use the actual content bounds from the placement calculations,
+/// ensuring they accurately reflect where content was placed (including margins
+/// and alignment toward folds).
 fn generate_trim_marks(config: &MarksConfig) -> String {
     let mut ops = String::new();
 
-    // Find maximum content dimensions across all cells
-    // This ensures trim marks encompass all content regardless of aspect ratio
-    let mut max_content_width: f32 = 0.0;
-    let mut max_content_height: f32 = 0.0;
-
-    for bounds in &config.content_bounds {
-        max_content_width = max_content_width.max(bounds.width);
-        max_content_height = max_content_height.max(bounds.height);
-    }
-
-    // If no content bounds provided, fall back to cell dimensions
-    if config.content_bounds.is_empty() || (max_content_width == 0.0 && max_content_height == 0.0) {
-        max_content_width = config.cell_width;
-        max_content_height = config.cell_height;
+    // If no content bounds provided, skip trim marks
+    if config.content_bounds.is_empty() {
+        return ops;
     }
 
     // Set line properties for trim marks
     ops.push_str(&format!("{} w\n", CROP_MARK_WIDTH));
     ops.push_str("[] 0 d\n"); // solid line
 
-    // Draw trim marks at content boundaries for each cell
-    // Content is aligned to fold edges, so we calculate trim position per cell
-    for row in 0..config.rows {
-        for col in 0..config.cols {
-            // Cell origin (bottom-left)
-            let cell_x = config.leaf_left + col as f32 * config.cell_width;
-            let cell_y = config.leaf_bottom + (config.rows - row - 1) as f32 * config.cell_height;
-
-            // Determine fold edges for this cell (content is pushed toward folds)
-            let fold_on_right = match config.cols {
-                2 => col == 0,
-                4 => col == 0 || col == 2,
-                _ => false,
-            };
-            let fold_on_left = match config.cols {
-                2 => col == 1,
-                4 => col == 1 || col == 3,
-                _ => false,
-            };
-            let fold_on_bottom = config.rows > 1 && row == 0;
-            let fold_on_top = config.rows > 1 && row == config.rows - 1;
-
-            // Calculate content position based on fold alignment
-            let content_x = if fold_on_right {
-                cell_x + config.cell_width - max_content_width
-            } else if fold_on_left {
-                cell_x
-            } else {
-                cell_x + (config.cell_width - max_content_width) / 2.0
-            };
-
-            let content_y = if fold_on_bottom {
-                cell_y
-            } else if fold_on_top {
-                cell_y + config.cell_height - max_content_height
-            } else {
-                cell_y + (config.cell_height - max_content_height) / 2.0
-            };
-
-            // Content corners
-            let left = content_x;
-            let right = content_x + max_content_width;
-            let bottom = content_y;
-            let top = content_y + max_content_height;
-
-            // Draw L-shaped trim marks at each corner of the content area
-            // Top-left corner
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                left,
-                top + CROP_MARK_GAP,
-                left,
-                top + CROP_MARK_GAP + CROP_MARK_LENGTH
-            ));
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                left - CROP_MARK_GAP,
-                top,
-                left - CROP_MARK_GAP - CROP_MARK_LENGTH,
-                top
-            ));
-
-            // Top-right corner
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                right,
-                top + CROP_MARK_GAP,
-                right,
-                top + CROP_MARK_GAP + CROP_MARK_LENGTH
-            ));
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                right + CROP_MARK_GAP,
-                top,
-                right + CROP_MARK_GAP + CROP_MARK_LENGTH,
-                top
-            ));
-
-            // Bottom-left corner
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                left,
-                bottom - CROP_MARK_GAP,
-                left,
-                bottom - CROP_MARK_GAP - CROP_MARK_LENGTH
-            ));
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                left - CROP_MARK_GAP,
-                bottom,
-                left - CROP_MARK_GAP - CROP_MARK_LENGTH,
-                bottom
-            ));
-
-            // Bottom-right corner
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                right,
-                bottom - CROP_MARK_GAP,
-                right,
-                bottom - CROP_MARK_GAP - CROP_MARK_LENGTH
-            ));
-            ops.push_str(&format!(
-                "{} {} m {} {} l S\n",
-                right + CROP_MARK_GAP,
-                bottom,
-                right + CROP_MARK_GAP + CROP_MARK_LENGTH,
-                bottom
-            ));
+    // Draw trim marks using the actual content bounds for each cell
+    // These bounds come directly from the placement calculations and already
+    // account for margins and fold alignment
+    for bounds in &config.content_bounds {
+        // Skip empty bounds (blank pages)
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            continue;
         }
+
+        let left = bounds.x;
+        let right = bounds.x + bounds.width;
+        let bottom = bounds.y;
+        let top = bounds.y + bounds.height;
+
+        // Draw L-shaped trim marks at each corner of the content area
+        // Top-left corner
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            left,
+            top + CROP_MARK_GAP,
+            left,
+            top + CROP_MARK_GAP + CROP_MARK_LENGTH
+        ));
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            left - CROP_MARK_GAP,
+            top,
+            left - CROP_MARK_GAP - CROP_MARK_LENGTH,
+            top
+        ));
+
+        // Top-right corner
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            right,
+            top + CROP_MARK_GAP,
+            right,
+            top + CROP_MARK_GAP + CROP_MARK_LENGTH
+        ));
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            right + CROP_MARK_GAP,
+            top,
+            right + CROP_MARK_GAP + CROP_MARK_LENGTH,
+            top
+        ));
+
+        // Bottom-left corner
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            left,
+            bottom - CROP_MARK_GAP,
+            left,
+            bottom - CROP_MARK_GAP - CROP_MARK_LENGTH
+        ));
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            left - CROP_MARK_GAP,
+            bottom,
+            left - CROP_MARK_GAP - CROP_MARK_LENGTH,
+            bottom
+        ));
+
+        // Bottom-right corner
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            right,
+            bottom - CROP_MARK_GAP,
+            right,
+            bottom - CROP_MARK_GAP - CROP_MARK_LENGTH
+        ));
+        ops.push_str(&format!(
+            "{} {} m {} {} l S\n",
+            right + CROP_MARK_GAP,
+            bottom,
+            right + CROP_MARK_GAP + CROP_MARK_LENGTH,
+            bottom
+        ));
     }
 
     ops
