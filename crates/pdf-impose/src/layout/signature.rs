@@ -22,7 +22,11 @@
 
 use crate::types::PageArrangement;
 
-use super::{GridPosition, PageSide, SheetSide, SignatureSlot};
+use super::{PageSide, SheetSide, SignatureSlot};
+
+// =============================================================================
+// Signature Calculation
+// =============================================================================
 
 /// Calculate signature slots for all signatures needed to hold the given pages.
 ///
@@ -38,14 +42,9 @@ pub fn calculate_signature_slots(
     let padded_count = ((total_pages + pages_per_sig - 1) / pages_per_sig) * pages_per_sig;
     let num_signatures = padded_count / pages_per_sig;
 
-    let mut signatures = Vec::with_capacity(num_signatures);
-
-    for _sig_num in 0..num_signatures {
-        let slots = create_signature_slots(arrangement);
-        signatures.push(slots);
-    }
-
-    signatures
+    (0..num_signatures)
+        .map(|_| create_signature_slots(arrangement))
+        .collect()
 }
 
 /// Create the slot layout for a single signature.
@@ -64,331 +63,9 @@ fn create_signature_slots(arrangement: PageArrangement) -> Vec<SignatureSlot> {
     }
 }
 
-/// Create slots for folio arrangement (4 pages, 2x1 grid, 1 fold)
-///
-/// Layout after folding:
-/// ```text
-/// +---+---+
-/// | 2 | 3 |  <- inside (verso, recto)
-/// +---+---+
-/// | 4 | 1 |  <- outside (verso, recto)  [this is Side A]
-/// +---+---+
-/// ```
-///
-/// Printed sheets:
-/// - Side A (front): [page 4, page 1] left to right
-/// - Side B (back):  [page 2, page 3] left to right
-fn create_folio_slots() -> Vec<SignatureSlot> {
-    vec![
-        // Side A (front) - 2 cols x 1 row
-        SignatureSlot {
-            slot_index: 0,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 0), // left
-            rotated: false,
-            page_side: PageSide::Verso, // page 4 is even = verso
-        },
-        SignatureSlot {
-            slot_index: 1,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 1), // right
-            rotated: false,
-            page_side: PageSide::Recto, // page 1 is odd = recto
-        },
-        // Side B (back) - 2 cols x 1 row
-        SignatureSlot {
-            slot_index: 2,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 0), // left
-            rotated: false,
-            page_side: PageSide::Verso, // page 2 is even = verso
-        },
-        SignatureSlot {
-            slot_index: 3,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 1), // right
-            rotated: false,
-            page_side: PageSide::Recto, // page 3 is odd = recto
-        },
-    ]
-}
-
-/// Create slots for quarto arrangement (8 pages, 2x2 grid, 2 folds)
-///
-/// Printed sheets (before mirroring for duplex):
-/// - Side A: Top row [5↓, 4↓], Bottom row [8, 1]
-/// - Side B: Top row [6↓, 3↓], Bottom row [7, 2]
-///
-/// For duplex printing, Side B is horizontally mirrored:
-/// - Side B printed: Top row [3↓, 6↓], Bottom row [2, 7]
-fn create_quarto_slots() -> Vec<SignatureSlot> {
-    vec![
-        // Side A (front) - 2 cols x 2 rows
-        // Top row (rotated 180°)
-        SignatureSlot {
-            slot_index: 0,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 0), // top-left
-            rotated: true,
-            page_side: PageSide::Recto, // page 5 is odd
-        },
-        SignatureSlot {
-            slot_index: 1,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 1), // top-right
-            rotated: true,
-            page_side: PageSide::Verso, // page 4 is even
-        },
-        // Bottom row (not rotated)
-        SignatureSlot {
-            slot_index: 2,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(1, 0), // bottom-left
-            rotated: false,
-            page_side: PageSide::Verso, // page 8 is even
-        },
-        SignatureSlot {
-            slot_index: 3,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(1, 1), // bottom-right
-            rotated: false,
-            page_side: PageSide::Recto, // page 1 is odd
-        },
-        // Side B (back) - mirrored horizontally for duplex
-        // Top row (rotated 180°)
-        SignatureSlot {
-            slot_index: 4,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 0), // top-left (was top-right before mirror)
-            rotated: true,
-            page_side: PageSide::Recto, // page 3 is odd
-        },
-        SignatureSlot {
-            slot_index: 5,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 1), // top-right (was top-left before mirror)
-            rotated: true,
-            page_side: PageSide::Verso, // page 6 is even
-        },
-        // Bottom row (not rotated)
-        SignatureSlot {
-            slot_index: 6,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(1, 0), // bottom-left (was bottom-right before mirror)
-            rotated: false,
-            page_side: PageSide::Recto, // page 2 is even (wait, 2 is even = verso)
-        },
-        SignatureSlot {
-            slot_index: 7,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(1, 1), // bottom-right (was bottom-left before mirror)
-            rotated: false,
-            page_side: PageSide::Verso, // page 7 is odd = recto
-        },
-    ]
-}
-
-/// Create slots for octavo arrangement (16 pages, 4x2 grid, 3 folds)
-///
-/// Printed sheets:
-/// - Side A: Top row [5↓, 12↓, 9↓, 8↓], Bottom row [4, 13, 16, 1]
-/// - Side B: Top row [7↓, 10↓, 11↓, 6↓], Bottom row [2, 15, 14, 3]
-///
-/// After mirroring for duplex (Side B):
-/// - Side B printed: Top row [6↓, 11↓, 10↓, 7↓], Bottom row [3, 14, 15, 2]
-fn create_octavo_slots() -> Vec<SignatureSlot> {
-    vec![
-        // Side A (front) - 4 cols x 2 rows
-        // Top row (rotated 180°)
-        SignatureSlot {
-            slot_index: 0,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 0),
-            rotated: true,
-            page_side: PageSide::Recto, // page 5
-        },
-        SignatureSlot {
-            slot_index: 1,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 1),
-            rotated: true,
-            page_side: PageSide::Verso, // page 12
-        },
-        SignatureSlot {
-            slot_index: 2,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 2),
-            rotated: true,
-            page_side: PageSide::Recto, // page 9
-        },
-        SignatureSlot {
-            slot_index: 3,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 3),
-            rotated: true,
-            page_side: PageSide::Verso, // page 8
-        },
-        // Bottom row (not rotated)
-        SignatureSlot {
-            slot_index: 4,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(1, 0),
-            rotated: false,
-            page_side: PageSide::Verso, // page 4
-        },
-        SignatureSlot {
-            slot_index: 5,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(1, 1),
-            rotated: false,
-            page_side: PageSide::Recto, // page 13
-        },
-        SignatureSlot {
-            slot_index: 6,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(1, 2),
-            rotated: false,
-            page_side: PageSide::Verso, // page 16
-        },
-        SignatureSlot {
-            slot_index: 7,
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(1, 3),
-            rotated: false,
-            page_side: PageSide::Recto, // page 1
-        },
-        // Side B (back) - mirrored for duplex
-        // Top row (rotated 180°)
-        SignatureSlot {
-            slot_index: 8,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 0),
-            rotated: true,
-            page_side: PageSide::Verso, // page 6
-        },
-        SignatureSlot {
-            slot_index: 9,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 1),
-            rotated: true,
-            page_side: PageSide::Recto, // page 11
-        },
-        SignatureSlot {
-            slot_index: 10,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 2),
-            rotated: true,
-            page_side: PageSide::Verso, // page 10
-        },
-        SignatureSlot {
-            slot_index: 11,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 3),
-            rotated: true,
-            page_side: PageSide::Recto, // page 7
-        },
-        // Bottom row (not rotated)
-        SignatureSlot {
-            slot_index: 12,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(1, 0),
-            rotated: false,
-            page_side: PageSide::Recto, // page 3
-        },
-        SignatureSlot {
-            slot_index: 13,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(1, 1),
-            rotated: false,
-            page_side: PageSide::Verso, // page 14
-        },
-        SignatureSlot {
-            slot_index: 14,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(1, 2),
-            rotated: false,
-            page_side: PageSide::Recto, // page 15
-        },
-        SignatureSlot {
-            slot_index: 15,
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(1, 3),
-            rotated: false,
-            page_side: PageSide::Verso, // page 2
-        },
-    ]
-}
-
-/// Create slots for custom page count using generic saddle-stitch pattern
-fn create_custom_slots(pages_per_signature: usize) -> Vec<SignatureSlot> {
-    let sheets = pages_per_signature / 4;
-    let mut slots = Vec::with_capacity(pages_per_signature);
-
-    // Generic saddle-stitch pattern
-    for i in 0..sheets {
-        let _last = pages_per_signature - 1 - (2 * i);
-        let _first = 2 * i;
-
-        // Front side
-        slots.push(SignatureSlot {
-            slot_index: slots.len(),
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 0),
-            rotated: false,
-            page_side: PageSide::Verso,
-        });
-        slots.push(SignatureSlot {
-            slot_index: slots.len(),
-            sheet_side: SheetSide::Front,
-            grid_pos: GridPosition::new(0, 1),
-            rotated: false,
-            page_side: PageSide::Recto,
-        });
-
-        // Back side
-        slots.push(SignatureSlot {
-            slot_index: slots.len(),
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 0),
-            rotated: false,
-            page_side: PageSide::Verso,
-        });
-        slots.push(SignatureSlot {
-            slot_index: slots.len(),
-            sheet_side: SheetSide::Back,
-            grid_pos: GridPosition::new(0, 1),
-            rotated: false,
-            page_side: PageSide::Recto,
-        });
-    }
-
-    slots
-}
-
-/// Map source pages to signature slots.
-///
-/// Given the slots for a signature and the starting page index,
-/// returns which source page goes in each slot (or None for blank padding).
-pub fn map_pages_to_slots(
-    arrangement: PageArrangement,
-    sig_start: usize,
-    total_source_pages: usize,
-) -> Vec<Option<usize>> {
-    // Calculate the page indices using the traditional ordering
-    let page_indices = calculate_page_order(arrangement);
-
-    page_indices
-        .into_iter()
-        .map(|relative_idx| {
-            let absolute_idx = sig_start + relative_idx;
-            if absolute_idx < total_source_pages {
-                Some(absolute_idx)
-            } else {
-                None // Blank padding
-            }
-        })
-        .collect()
-}
+// =============================================================================
+// Page Ordering
+// =============================================================================
 
 /// Calculate the page order for a signature (which page number goes in each slot).
 ///
@@ -400,31 +77,20 @@ pub fn map_pages_to_slots(
 /// - Slot 3 gets page 3 (index 2)
 fn calculate_page_order(arrangement: PageArrangement) -> Vec<usize> {
     match arrangement {
-        PageArrangement::Folio => {
-            // Side A [4, 1], Side B [2, 3]
-            vec![3, 0, 1, 2]
-        }
-        PageArrangement::Quarto => {
-            // Side A top [5,4], bottom [8,1]; Side B top [3,6], bottom [2,7]
-            // After mirroring for duplex
-            vec![
-                4, 3, // Side A top: pages 5, 4
-                7, 0, // Side A bottom: pages 8, 1
-                2, 5, // Side B top: pages 3, 6 (mirrored)
-                1, 6, // Side B bottom: pages 2, 7 (mirrored)
-            ]
-        }
-        PageArrangement::Octavo => {
-            // Side A: Top [5,12,9,8], Bottom [4,13,16,1]
-            // Side B (mirrored): Top [6,11,10,7], Bottom [3,14,15,2]
-            vec![
-                // Side A - top row
-                4, 11, 8, 7, // Side A - bottom row
-                3, 12, 15, 0, // Side B - top row (mirrored)
-                5, 10, 9, 6, // Side B - bottom row (mirrored)
-                2, 13, 14, 1,
-            ]
-        }
+        PageArrangement::Folio => vec![3, 0, 1, 2],
+        PageArrangement::Quarto => vec![
+            4, 3, // Side A top: pages 5, 4
+            7, 0, // Side A bottom: pages 8, 1
+            2, 5, // Side B top: pages 3, 6 (mirrored)
+            1, 6, // Side B bottom: pages 2, 7 (mirrored)
+        ],
+        PageArrangement::Octavo => vec![
+            // Side A - top row
+            4, 11, 8, 7, // Side A - bottom row
+            3, 12, 15, 0, // Side B - top row (mirrored)
+            5, 10, 9, 6, // Side B - bottom row (mirrored)
+            2, 13, 14, 1,
+        ],
         PageArrangement::Custom {
             pages_per_signature,
         } => {
@@ -444,10 +110,184 @@ fn calculate_page_order(arrangement: PageArrangement) -> Vec<usize> {
     }
 }
 
+/// Map source pages to signature slots.
+///
+/// Given the slots for a signature and the starting page index,
+/// returns which source page goes in each slot (or None for blank padding).
+pub fn map_pages_to_slots(
+    arrangement: PageArrangement,
+    sig_start: usize,
+    total_source_pages: usize,
+) -> Vec<Option<usize>> {
+    calculate_page_order(arrangement)
+        .into_iter()
+        .map(|relative_idx| {
+            let absolute_idx = sig_start + relative_idx;
+            if absolute_idx < total_source_pages {
+                Some(absolute_idx)
+            } else {
+                None // Blank padding
+            }
+        })
+        .collect()
+}
+
 /// Get slots for a specific sheet side
 pub fn slots_for_side(slots: &[SignatureSlot], side: SheetSide) -> Vec<&SignatureSlot> {
     slots.iter().filter(|s| s.sheet_side == side).collect()
 }
+
+// =============================================================================
+// Slot Creation - Folio
+// =============================================================================
+
+/// Create slots for folio arrangement (4 pages, 2x1 grid, 1 fold)
+///
+/// Layout after folding:
+/// ```text
+/// +---+---+
+/// | 2 | 3 |  <- inside (verso, recto)
+/// +---+---+
+/// | 4 | 1 |  <- outside (verso, recto)  [this is Side A]
+/// +---+---+
+/// ```
+///
+/// Printed sheets:
+/// - Side A (front): [page 4, page 1] left to right
+/// - Side B (back):  [page 2, page 3] left to right
+fn create_folio_slots() -> Vec<SignatureSlot> {
+    vec![
+        // Side A (front) - 2 cols x 1 row
+        SignatureSlot::new(0, SheetSide::Front, 0, 0, false, PageSide::Verso), // page 4
+        SignatureSlot::new(1, SheetSide::Front, 0, 1, false, PageSide::Recto), // page 1
+        // Side B (back) - 2 cols x 1 row
+        SignatureSlot::new(2, SheetSide::Back, 0, 0, false, PageSide::Verso), // page 2
+        SignatureSlot::new(3, SheetSide::Back, 0, 1, false, PageSide::Recto), // page 3
+    ]
+}
+
+// =============================================================================
+// Slot Creation - Quarto
+// =============================================================================
+
+/// Create slots for quarto arrangement (8 pages, 2x2 grid, 2 folds)
+///
+/// Printed sheets (before mirroring for duplex):
+/// - Side A: Top row [5↓, 4↓], Bottom row [8, 1]
+/// - Side B: Top row [6↓, 3↓], Bottom row [7, 2]
+///
+/// For duplex printing, Side B is horizontally mirrored:
+/// - Side B printed: Top row [3↓, 6↓], Bottom row [2, 7]
+fn create_quarto_slots() -> Vec<SignatureSlot> {
+    vec![
+        // Side A (front) - 2 cols x 2 rows
+        // Top row (rotated 180°)
+        SignatureSlot::new(0, SheetSide::Front, 0, 0, true, PageSide::Recto), // page 5
+        SignatureSlot::new(1, SheetSide::Front, 0, 1, true, PageSide::Verso), // page 4
+        // Bottom row (not rotated)
+        SignatureSlot::new(2, SheetSide::Front, 1, 0, false, PageSide::Verso), // page 8
+        SignatureSlot::new(3, SheetSide::Front, 1, 1, false, PageSide::Recto), // page 1
+        // Side B (back) - mirrored horizontally for duplex
+        // Top row (rotated 180°)
+        SignatureSlot::new(4, SheetSide::Back, 0, 0, true, PageSide::Recto), // page 3
+        SignatureSlot::new(5, SheetSide::Back, 0, 1, true, PageSide::Verso), // page 6
+        // Bottom row (not rotated)
+        SignatureSlot::new(6, SheetSide::Back, 1, 0, false, PageSide::Recto), // page 2
+        SignatureSlot::new(7, SheetSide::Back, 1, 1, false, PageSide::Verso), // page 7
+    ]
+}
+
+// =============================================================================
+// Slot Creation - Octavo
+// =============================================================================
+
+/// Create slots for octavo arrangement (16 pages, 4x2 grid, 3 folds)
+///
+/// Printed sheets:
+/// - Side A: Top row [5↓, 12↓, 9↓, 8↓], Bottom row [4, 13, 16, 1]
+/// - Side B (mirrored): Top row [6↓, 11↓, 10↓, 7↓], Bottom row [3, 14, 15, 2]
+fn create_octavo_slots() -> Vec<SignatureSlot> {
+    vec![
+        // Side A (front) - 4 cols x 2 rows
+        // Top row (rotated 180°)
+        SignatureSlot::new(0, SheetSide::Front, 0, 0, true, PageSide::Recto), // page 5
+        SignatureSlot::new(1, SheetSide::Front, 0, 1, true, PageSide::Verso), // page 12
+        SignatureSlot::new(2, SheetSide::Front, 0, 2, true, PageSide::Recto), // page 9
+        SignatureSlot::new(3, SheetSide::Front, 0, 3, true, PageSide::Verso), // page 8
+        // Bottom row (not rotated)
+        SignatureSlot::new(4, SheetSide::Front, 1, 0, false, PageSide::Verso), // page 4
+        SignatureSlot::new(5, SheetSide::Front, 1, 1, false, PageSide::Recto), // page 13
+        SignatureSlot::new(6, SheetSide::Front, 1, 2, false, PageSide::Verso), // page 16
+        SignatureSlot::new(7, SheetSide::Front, 1, 3, false, PageSide::Recto), // page 1
+        // Side B (back) - mirrored for duplex
+        // Top row (rotated 180°)
+        SignatureSlot::new(8, SheetSide::Back, 0, 0, true, PageSide::Verso), // page 6
+        SignatureSlot::new(9, SheetSide::Back, 0, 1, true, PageSide::Recto), // page 11
+        SignatureSlot::new(10, SheetSide::Back, 0, 2, true, PageSide::Verso), // page 10
+        SignatureSlot::new(11, SheetSide::Back, 0, 3, true, PageSide::Recto), // page 7
+        // Bottom row (not rotated)
+        SignatureSlot::new(12, SheetSide::Back, 1, 0, false, PageSide::Recto), // page 3
+        SignatureSlot::new(13, SheetSide::Back, 1, 1, false, PageSide::Verso), // page 14
+        SignatureSlot::new(14, SheetSide::Back, 1, 2, false, PageSide::Recto), // page 15
+        SignatureSlot::new(15, SheetSide::Back, 1, 3, false, PageSide::Verso), // page 2
+    ]
+}
+
+// =============================================================================
+// Slot Creation - Custom
+// =============================================================================
+
+/// Create slots for custom page count using generic saddle-stitch pattern
+fn create_custom_slots(pages_per_signature: usize) -> Vec<SignatureSlot> {
+    let sheets = pages_per_signature / 4;
+    let mut slots = Vec::with_capacity(pages_per_signature);
+
+    for i in 0..sheets {
+        let base_idx = i * 4;
+
+        // Front side
+        slots.push(SignatureSlot::new(
+            base_idx,
+            SheetSide::Front,
+            0,
+            0,
+            false,
+            PageSide::Verso,
+        ));
+        slots.push(SignatureSlot::new(
+            base_idx + 1,
+            SheetSide::Front,
+            0,
+            1,
+            false,
+            PageSide::Recto,
+        ));
+
+        // Back side
+        slots.push(SignatureSlot::new(
+            base_idx + 2,
+            SheetSide::Back,
+            0,
+            0,
+            false,
+            PageSide::Verso,
+        ));
+        slots.push(SignatureSlot::new(
+            base_idx + 3,
+            SheetSide::Back,
+            0,
+            1,
+            false,
+            PageSide::Recto,
+        ));
+    }
+
+    slots
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -505,5 +345,31 @@ mod tests {
         assert_eq!(mapped[1], Some(4)); // page 5 (index 4)
         assert_eq!(mapped[2], Some(5)); // page 6 (index 5)
         assert_eq!(mapped[3], None); // page 7 (index 6) - blank
+    }
+
+    #[test]
+    fn test_slots_for_side() {
+        let slots = create_quarto_slots();
+
+        let front = slots_for_side(&slots, SheetSide::Front);
+        assert_eq!(front.len(), 4);
+        assert!(front.iter().all(|s| s.sheet_side == SheetSide::Front));
+
+        let back = slots_for_side(&slots, SheetSide::Back);
+        assert_eq!(back.len(), 4);
+        assert!(back.iter().all(|s| s.sheet_side == SheetSide::Back));
+    }
+
+    #[test]
+    fn test_signature_slot_new() {
+        let slot = SignatureSlot::new(5, SheetSide::Back, 1, 2, true, PageSide::Verso);
+
+        assert_eq!(slot.slot_index, 5);
+        assert_eq!(slot.sheet_side, SheetSide::Back);
+        assert_eq!(slot.grid_pos.row, 1);
+        assert_eq!(slot.grid_pos.col, 2);
+        assert!(slot.rotated);
+        assert_eq!(slot.page_side, PageSide::Verso);
+        assert_eq!(slot.rotation_degrees(), 180.0);
     }
 }

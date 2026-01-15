@@ -1,27 +1,115 @@
 //! Layout data types for imposition
 //!
 //! These types represent the intermediate layout calculations between
-//! signature ordering and PDF rendering.
+//! signature ordering and PDF rendering:
+//! - SignatureSlot: Where a page goes in the signature
+//! - GridLayout: The cell arrangement on a sheet
+//! - PagePlacement: Final rendering information for a page
+//! - SheetLayout: All placements for one side of a sheet
+
+// =============================================================================
+// Page and Sheet Sides
+// =============================================================================
 
 /// Which side of a bound book this page appears on after folding
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PageSide {
-    /// Right-hand page (odd page numbers in final book)
+    /// Right-hand page (odd page numbers in final book: 1, 3, 5, ...)
     /// The spine edge is on the left
+    #[default]
     Recto,
-    /// Left-hand page (even page numbers in final book)
+    /// Left-hand page (even page numbers in final book: 2, 4, 6, ...)
     /// The spine edge is on the right
     Verso,
 }
 
+impl PageSide {
+    /// Returns true if this is a recto (right-hand) page
+    pub fn is_recto(self) -> bool {
+        matches!(self, PageSide::Recto)
+    }
+
+    /// Returns the opposite side
+    pub fn opposite(self) -> Self {
+        match self {
+            PageSide::Recto => PageSide::Verso,
+            PageSide::Verso => PageSide::Recto,
+        }
+    }
+
+    /// Get page side from 1-based page number
+    pub fn from_page_number(page_num: usize) -> Self {
+        if page_num % 2 == 1 {
+            PageSide::Recto // Odd pages are recto
+        } else {
+            PageSide::Verso // Even pages are verso
+        }
+    }
+}
+
 /// Which physical side of the printed sheet
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SheetSide {
     /// Front of the sheet (printed first in duplex)
+    #[default]
     Front,
     /// Back of the sheet (printed second in duplex)
     Back,
 }
+
+impl SheetSide {
+    /// Returns true if this is the front side
+    pub fn is_front(self) -> bool {
+        matches!(self, SheetSide::Front)
+    }
+
+    /// Returns the opposite side
+    pub fn opposite(self) -> Self {
+        match self {
+            SheetSide::Front => SheetSide::Back,
+            SheetSide::Back => SheetSide::Front,
+        }
+    }
+}
+
+// =============================================================================
+// Grid Position
+// =============================================================================
+
+/// Position within the grid (row, column)
+///
+/// Row 0 is the top row, column 0 is the leftmost column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct GridPosition {
+    /// Row index (0 = top row)
+    pub row: usize,
+    /// Column index (0 = leftmost column)
+    pub col: usize,
+}
+
+impl GridPosition {
+    /// Create a new grid position
+    pub const fn new(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
+
+    /// Convert to flat index in row-major order
+    pub fn to_index(self, cols: usize) -> usize {
+        self.row * cols + self.col
+    }
+
+    /// Create from flat index in row-major order
+    pub fn from_index(index: usize, cols: usize) -> Self {
+        Self {
+            row: index / cols,
+            col: index % cols,
+        }
+    }
+}
+
+// =============================================================================
+// Signature Slot
+// =============================================================================
 
 /// A page's position within a signature
 ///
@@ -43,20 +131,34 @@ pub struct SignatureSlot {
     pub page_side: PageSide,
 }
 
-/// Position within the grid (row, column)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GridPosition {
-    /// Row index (0 = top row)
-    pub row: usize,
-    /// Column index (0 = leftmost column)
-    pub col: usize,
-}
+impl SignatureSlot {
+    /// Create a new signature slot
+    pub fn new(
+        slot_index: usize,
+        sheet_side: SheetSide,
+        row: usize,
+        col: usize,
+        rotated: bool,
+        page_side: PageSide,
+    ) -> Self {
+        Self {
+            slot_index,
+            sheet_side,
+            grid_pos: GridPosition::new(row, col),
+            rotated,
+            page_side,
+        }
+    }
 
-impl GridPosition {
-    pub fn new(row: usize, col: usize) -> Self {
-        Self { row, col }
+    /// Get rotation in degrees (0 or 180)
+    pub fn rotation_degrees(&self) -> f32 {
+        if self.rotated { 180.0 } else { 0.0 }
     }
 }
+
+// =============================================================================
+// Grid Layout
+// =============================================================================
 
 /// Grid layout for a folding scheme
 ///
@@ -106,13 +208,50 @@ impl GridLayout {
         row > 0 && self.horizontal_folds.contains(&(row - 1))
     }
 
+    /// Check if a column has a cut on its right edge
+    pub fn has_cut_right(&self, col: usize) -> bool {
+        self.vertical_cuts.contains(&col)
+    }
+
+    /// Check if a column has a cut on its left edge
+    pub fn has_cut_left(&self, col: usize) -> bool {
+        col > 0 && self.vertical_cuts.contains(&(col - 1))
+    }
+
     /// Total number of cells in the grid
     pub fn cell_count(&self) -> usize {
         self.cols * self.rows
     }
+
+    /// Check if a position is on the outer left edge
+    pub fn is_outer_left(&self, col: usize) -> bool {
+        col == 0
+    }
+
+    /// Check if a position is on the outer right edge
+    pub fn is_outer_right(&self, col: usize) -> bool {
+        col == self.cols - 1
+    }
+
+    /// Check if a position is on the outer top edge
+    pub fn is_outer_top(&self, row: usize) -> bool {
+        row == 0
+    }
+
+    /// Check if a position is on the outer bottom edge
+    pub fn is_outer_bottom(&self, row: usize) -> bool {
+        row == self.rows - 1
+    }
 }
 
+// =============================================================================
+// Rectangle
+// =============================================================================
+
 /// A rectangular area in points
+///
+/// Used for cell bounds, content areas, and page placements.
+/// Coordinates are in PDF space (origin at bottom-left).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Rect {
     /// X position (left edge)
@@ -126,13 +265,34 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+    /// Create a new rectangle
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self {
             x,
             y,
             width,
             height,
         }
+    }
+
+    /// Create from corner points (left, bottom, right, top)
+    pub fn from_corners(left: f32, bottom: f32, right: f32, top: f32) -> Self {
+        Self {
+            x: left,
+            y: bottom,
+            width: right - left,
+            height: top - bottom,
+        }
+    }
+
+    /// Left edge x coordinate (same as x)
+    pub fn left(&self) -> f32 {
+        self.x
+    }
+
+    /// Bottom edge y coordinate (same as y)
+    pub fn bottom(&self) -> f32 {
+        self.y
     }
 
     /// Right edge x coordinate
@@ -154,7 +314,41 @@ impl Rect {
     pub fn center_y(&self) -> f32 {
         self.y + self.height / 2.0
     }
+
+    /// Center point as (x, y) tuple
+    pub fn center(&self) -> (f32, f32) {
+        (self.center_x(), self.center_y())
+    }
+
+    /// Area of the rectangle
+    pub fn area(&self) -> f32 {
+        self.width * self.height
+    }
+
+    /// Check if the rectangle has positive area
+    pub fn is_valid(&self) -> bool {
+        self.width > 0.0 && self.height > 0.0
+    }
+
+    /// Inset the rectangle by the given amounts
+    pub fn inset(&self, left: f32, bottom: f32, right: f32, top: f32) -> Self {
+        Self {
+            x: self.x + left,
+            y: self.y + bottom,
+            width: self.width - left - right,
+            height: self.height - bottom - top,
+        }
+    }
+
+    /// Inset the rectangle uniformly on all sides
+    pub fn inset_uniform(&self, amount: f32) -> Self {
+        self.inset(amount, amount, amount, amount)
+    }
 }
+
+// =============================================================================
+// Page Placement
+// =============================================================================
 
 /// Final placement of a source page on the output sheet
 ///
@@ -174,7 +368,26 @@ pub struct PagePlacement {
     pub slot: SignatureSlot,
 }
 
+impl PagePlacement {
+    /// Returns true if this is a blank page
+    pub fn is_blank(&self) -> bool {
+        self.source_page.is_none()
+    }
+
+    /// Returns true if the page is rotated
+    pub fn is_rotated(&self) -> bool {
+        self.rotation_degrees.abs() > 0.1
+    }
+}
+
+// =============================================================================
+// Sheet Layout
+// =============================================================================
+
 /// Information about a single output sheet side
+///
+/// Contains all the page placements and bounds for rendering one side
+/// of a physical sheet.
 #[derive(Debug, Clone)]
 pub struct SheetLayout {
     /// Which side of the physical sheet
@@ -183,4 +396,16 @@ pub struct SheetLayout {
     pub placements: Vec<PagePlacement>,
     /// The leaf area bounds (inside sheet margins)
     pub leaf_bounds: Rect,
+}
+
+impl SheetLayout {
+    /// Get placements that have actual source pages (not blank)
+    pub fn non_blank_placements(&self) -> impl Iterator<Item = &PagePlacement> {
+        self.placements.iter().filter(|p| !p.is_blank())
+    }
+
+    /// Number of non-blank pages on this sheet side
+    pub fn content_count(&self) -> usize {
+        self.placements.iter().filter(|p| !p.is_blank()).count()
+    }
 }

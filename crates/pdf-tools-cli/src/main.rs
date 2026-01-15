@@ -120,6 +120,10 @@ enum Commands {
         #[arg(long, default_value = "0.0")]
         leaf_bottom_margin: f32,
 
+        /// Leaf cut margin in mm (space around cut lines)
+        #[arg(long, default_value = "0.0")]
+        leaf_cut_margin: f32,
+
         /// Show statistics only, don't generate PDF
         #[arg(long)]
         stats_only: bool,
@@ -288,6 +292,7 @@ async fn main() -> Result<()> {
             leaf_fore_edge_margin,
             leaf_top_margin,
             leaf_bottom_margin,
+            leaf_cut_margin,
             stats_only,
         } => {
             let options = pdf_impose::ImpositionOptions {
@@ -307,6 +312,7 @@ async fn main() -> Result<()> {
                         bottom_mm: leaf_bottom_margin,
                         fore_edge_mm: leaf_fore_edge_margin,
                         spine_mm: leaf_spine_margin,
+                        cut_mm: leaf_cut_margin,
                     },
                 },
                 marks: pdf_impose::PrinterMarks {

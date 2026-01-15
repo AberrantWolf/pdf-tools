@@ -1,7 +1,8 @@
 //! Signature binding imposition (folded sheets)
 
-use super::mm_to_pt;
 use super::sheet::{calculate_sheet_placements, render_sheet};
+use super::sheet_dimensions_pt;
+use crate::constants::mm_to_pt;
 use crate::layout::{
     Rect, SheetLayout, SheetSide, calculate_signature_slots, create_grid_layout, map_pages_to_slots,
 };
@@ -21,24 +22,14 @@ pub(crate) fn impose_signature_binding(
     // Get source page dimensions
     let source_dimensions: Vec<(f32, f32)> = page_ids
         .iter()
-        .map(|&id| get_page_dimensions(source, id).unwrap_or((612.0, 792.0)))
+        .map(|&id| {
+            get_page_dimensions(source, id).unwrap_or(crate::constants::DEFAULT_PAGE_DIMENSIONS)
+        })
         .collect();
 
-    // Calculate output sheet dimensions
-    let (output_width_mm, output_height_mm) = options
-        .output_paper_size
-        .dimensions_with_orientation(options.output_orientation);
-    let output_width_pt = mm_to_pt(output_width_mm);
-    let output_height_pt = mm_to_pt(output_height_mm);
-
-    // Calculate leaf area (inside sheet margins)
-    let sheet_margins = &options.margins.sheet;
-    let leaf_bounds = Rect::new(
-        mm_to_pt(sheet_margins.left_mm),
-        mm_to_pt(sheet_margins.bottom_mm),
-        output_width_pt - mm_to_pt(sheet_margins.left_mm) - mm_to_pt(sheet_margins.right_mm),
-        output_height_pt - mm_to_pt(sheet_margins.top_mm) - mm_to_pt(sheet_margins.bottom_mm),
-    );
+    // Calculate output dimensions and leaf area
+    let (output_width_pt, output_height_pt) = sheet_dimensions_pt(options);
+    let leaf_bounds = calculate_leaf_bounds(options, output_width_pt, output_height_pt);
 
     // Create grid layout
     let grid = create_grid_layout(
@@ -74,7 +65,7 @@ pub(crate) fn impose_signature_binding(
             .filter(|s| s.sheet_side == SheetSide::Back)
             .collect();
 
-        // Calculate placements for front side
+        // Render front side
         let front_placements = calculate_sheet_placements(
             &grid,
             &front_slots,
@@ -85,7 +76,6 @@ pub(crate) fn impose_signature_binding(
             (leaf_bounds.x, leaf_bounds.y),
         );
 
-        // Render front side
         let front_layout = SheetLayout {
             side: SheetSide::Front,
             placements: front_placements,
@@ -105,7 +95,7 @@ pub(crate) fn impose_signature_binding(
         )?;
         page_refs.push(Object::Reference(front_page_id));
 
-        // Calculate placements for back side
+        // Render back side
         if !back_slots.is_empty() {
             let back_placements = calculate_sheet_placements(
                 &grid,
@@ -138,7 +128,24 @@ pub(crate) fn impose_signature_binding(
         }
     }
 
-    // Create pages tree
+    // Finalize document
+    finalize_document(&mut output, pages_tree_id, page_refs);
+    Ok(output)
+}
+
+/// Calculate the leaf area bounds (inside sheet margins)
+fn calculate_leaf_bounds(options: &ImpositionOptions, width_pt: f32, height_pt: f32) -> Rect {
+    let margins = &options.margins.sheet;
+    Rect::new(
+        mm_to_pt(margins.left_mm),
+        mm_to_pt(margins.bottom_mm),
+        width_pt - mm_to_pt(margins.left_mm) - mm_to_pt(margins.right_mm),
+        height_pt - mm_to_pt(margins.top_mm) - mm_to_pt(margins.bottom_mm),
+    )
+}
+
+/// Create pages tree and catalog, finalize document structure
+fn finalize_document(output: &mut Document, pages_tree_id: ObjectId, page_refs: Vec<Object>) {
     let count = page_refs.len() as i64;
     let pages_dict = Dictionary::from_iter(vec![
         ("Type", Object::Name(b"Pages".to_vec())),
@@ -149,13 +156,10 @@ pub(crate) fn impose_signature_binding(
         .objects
         .insert(pages_tree_id, Object::Dictionary(pages_dict));
 
-    // Create catalog
     let catalog_id = output.add_object(Dictionary::from_iter(vec![
         ("Type", Object::Name(b"Catalog".to_vec())),
         ("Pages", Object::Reference(pages_tree_id)),
     ]));
 
     output.trailer.set("Root", catalog_id);
-
-    Ok(output)
 }

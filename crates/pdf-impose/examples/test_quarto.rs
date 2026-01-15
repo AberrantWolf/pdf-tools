@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
             bottom_mm: 5.0,
             fore_edge_mm: 5.0,
             spine_mm: 15.0, // Larger spine margin to see the effect
+            cut_mm: 0.0,
         },
     };
 

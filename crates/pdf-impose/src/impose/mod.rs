@@ -14,13 +14,20 @@ mod simple;
 
 pub use io::{load_multiple_pdfs, load_pdf, save_pdf};
 
+use crate::constants::mm_to_pt;
 use crate::options::ImpositionOptions;
 use crate::types::*;
 use flyleaves::add_flyleaves;
 use io::merge_documents;
 use lopdf::{Document, ObjectId};
 
+// =============================================================================
+// Main Entry Point
+// =============================================================================
+
 /// Main imposition function
+///
+/// Takes source documents and options, returns an imposed output document.
 pub async fn impose(documents: &[Document], options: &ImpositionOptions) -> Result<Document> {
     options.validate()?;
 
@@ -49,17 +56,21 @@ fn impose_sync(documents: &[Document], options: &ImpositionOptions) -> Result<Do
     }
 
     // Dispatch based on binding type
-    match options.binding_type {
-        BindingType::Signature | BindingType::CaseBinding => {
-            signature::impose_signature_binding(&merged, &page_ids, options)
-        }
-        BindingType::PerfectBinding | BindingType::SideStitch | BindingType::Spiral => {
-            simple::impose_simple_binding(&merged, &page_ids, options)
-        }
+    if options.binding_type.uses_signatures() {
+        signature::impose_signature_binding(&merged, &page_ids, options)
+    } else {
+        simple::impose_simple_binding(&merged, &page_ids, options)
     }
 }
 
-/// Convert millimeters to points
-pub(crate) fn mm_to_pt(mm: f32) -> f32 {
-    mm * 2.83465
+// =============================================================================
+// Shared Utilities
+// =============================================================================
+
+/// Calculate output sheet dimensions in points
+pub(crate) fn sheet_dimensions_pt(options: &ImpositionOptions) -> (f32, f32) {
+    let (width_mm, height_mm) = options
+        .output_paper_size
+        .dimensions_with_orientation(options.output_orientation);
+    (mm_to_pt(width_mm), mm_to_pt(height_mm))
 }

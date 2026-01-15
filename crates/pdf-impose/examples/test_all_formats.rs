@@ -155,6 +155,7 @@ async fn create_test_output(
             bottom_mm: 5.0,
             fore_edge_mm: 3.0,
             spine_mm: 7.0,
+            cut_mm: 0.0,
         },
     };
     // Enable printer's marks

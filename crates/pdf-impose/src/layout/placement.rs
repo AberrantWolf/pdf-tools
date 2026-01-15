@@ -2,82 +2,107 @@
 //!
 //! This module handles calculating the final position of page content
 //! within grid cells, accounting for:
-//! - Leaf margins (spine vs fore-edge)
-//! - Page rotation
+//! - Leaf margins (spine, fore-edge, top, bottom, cut)
 //! - Content alignment toward folds
 //! - Scaling
 
+use crate::constants::{DEFAULT_PAGE_DIMENSIONS, mm_to_pt};
 use crate::types::{LeafMargins, ScalingMode};
 
-use super::{GridLayout, PagePlacement, Rect, SignatureSlot, cell_bounds, cell_fold_edges};
+use super::{GridLayout, PagePlacement, Rect, SignatureSlot, cell_bounds, cell_edge_info};
+
+// =============================================================================
+// Content Area Calculation
+// =============================================================================
 
 /// Calculate the content area within a cell, accounting for margins.
 ///
 /// The content area is the region where page content can be placed,
-/// after applying leaf margins. Margins are applied based on:
-/// - Which edge is the spine (determined by page side and fold positions)
-/// - Whether the page is rotated (which swaps left/right margins)
+/// after applying leaf margins. Margins are applied based on edge type:
+/// - Spine margin: the binding edge (center fold for signatures)
+/// - Fore-edge margin: the outer edge opposite the spine
+/// - Cut margin: edges where pages will be cut apart
+/// - Top/bottom margins: head and tail of the page
 ///
 /// # Arguments
 /// * `cell` - The cell bounds
 /// * `margins` - Leaf margins configuration
 /// * `slot` - The signature slot (contains rotation and page side info)
-/// * `grid` - The grid layout (for determining fold positions)
+/// * `grid` - The grid layout (for determining fold/cut positions)
 pub fn calculate_content_area(
     cell: &Rect,
     margins: &LeafMargins,
     slot: &SignatureSlot,
     grid: &GridLayout,
 ) -> Rect {
-    let fold_edges = cell_fold_edges(grid, slot.grid_pos);
+    let edges = cell_edge_info(grid, slot.grid_pos);
 
-    // Determine horizontal margins based on fold positions
-    // The spine margin goes on the edge adjacent to a fold (where pages meet)
-    // The fore-edge margin goes on the outer/cut edge
-    // Rotation doesn't affect this - margins are applied to the cell, not the content
-    let (margin_left, margin_right) = if fold_edges.right && !fold_edges.left {
-        // Fold on right: spine on right, fore-edge on left
-        (margins.fore_edge_mm, margins.spine_mm)
-    } else if fold_edges.left && !fold_edges.right {
-        // Fold on left: spine on left, fore-edge on right
-        (margins.spine_mm, margins.fore_edge_mm)
-    } else if fold_edges.left && fold_edges.right {
-        // Folds on both sides (octavo inner columns): spine on both
-        (margins.spine_mm, margins.spine_mm)
-    } else {
-        // No vertical folds: use fore-edge on both (outer edges)
-        (margins.fore_edge_mm, margins.fore_edge_mm)
-    };
+    // Calculate margin for each edge based on what's there.
+    // Priority: cut > outer (fore-edge) > spine fold > non-spine fold (0)
+    let margin_left = calculate_edge_margin(
+        margins,
+        edges.cut_left,
+        edges.outer_left,
+        edges.fold_left,
+        edges.is_spine_left(),
+    );
 
-    // Determine vertical margins based on fold positions
-    // Same logic: spine margin on fold edge, fore-edge on cut/outer edge
-    let (margin_bottom, margin_top) = if fold_edges.bottom && !fold_edges.top {
-        // Fold at bottom: spine on bottom, fore-edge on top
-        (margins.spine_mm, margins.fore_edge_mm)
-    } else if fold_edges.top && !fold_edges.bottom {
-        // Fold at top: spine on top, fore-edge on bottom
-        (margins.fore_edge_mm, margins.spine_mm)
-    } else if fold_edges.top && fold_edges.bottom {
-        // Folds on both (unlikely but handle it)
-        (margins.spine_mm, margins.spine_mm)
-    } else {
-        // No horizontal folds: use top/bottom margins
-        (margins.bottom_mm, margins.top_mm)
-    };
+    let margin_right = calculate_edge_margin(
+        margins,
+        edges.cut_right,
+        edges.outer_right,
+        edges.fold_right,
+        edges.is_spine_right(),
+    );
 
-    // Convert margins from mm to points
-    let left_pt = mm_to_pt(margin_left);
-    let right_pt = mm_to_pt(margin_right);
-    let bottom_pt = mm_to_pt(margin_bottom);
-    let top_pt = mm_to_pt(margin_top);
+    let margin_top = calculate_edge_margin(
+        margins,
+        edges.cut_top,
+        edges.outer_top,
+        edges.fold_top,
+        edges.is_spine_top(),
+    );
 
-    Rect::new(
-        cell.x + left_pt,
-        cell.y + bottom_pt,
-        cell.width - left_pt - right_pt,
-        cell.height - bottom_pt - top_pt,
+    let margin_bottom = calculate_edge_margin(
+        margins,
+        edges.cut_bottom,
+        edges.outer_bottom,
+        edges.fold_bottom,
+        edges.is_spine_bottom(),
+    );
+
+    // Convert margins from mm to points and inset the cell
+    cell.inset(
+        mm_to_pt(margin_left),
+        mm_to_pt(margin_bottom),
+        mm_to_pt(margin_right),
+        mm_to_pt(margin_top),
     )
 }
+
+/// Calculate the margin for a single edge based on its properties.
+fn calculate_edge_margin(
+    margins: &LeafMargins,
+    is_cut: bool,
+    is_outer: bool,
+    is_fold: bool,
+    is_spine: bool,
+) -> f32 {
+    if is_cut {
+        margins.cut_mm
+    } else if is_outer {
+        margins.fore_edge_mm
+    } else if is_fold && is_spine {
+        margins.spine_mm
+    } else {
+        // Non-spine fold or interior edge: content aligns to it
+        0.0
+    }
+}
+
+// =============================================================================
+// Page Placement
+// =============================================================================
 
 /// Calculate the final page placement within the content area.
 ///
@@ -112,42 +137,58 @@ pub fn place_page(
     let scaled_height = source_height * scale;
 
     // Determine alignment based on fold positions
-    // Content should be pushed toward folds (where pages meet after folding)
-    let fold_edges = cell_fold_edges(grid, slot.grid_pos);
-
-    // Horizontal alignment
-    let x = if fold_edges.right && !fold_edges.left {
-        // Fold on right: push content right
-        content_area.x + content_area.width - scaled_width
-    } else if fold_edges.left && !fold_edges.right {
-        // Fold on left: push content left
-        content_area.x
-    } else {
-        // No preference or both sides: center
-        content_area.x + (content_area.width - scaled_width) / 2.0
-    };
-
-    // Vertical alignment
-    let y = if fold_edges.bottom && !fold_edges.top {
-        // Fold at bottom: push content down
-        content_area.y
-    } else if fold_edges.top && !fold_edges.bottom {
-        // Fold at top: push content up
-        content_area.y + content_area.height - scaled_height
-    } else {
-        // No preference or both: center
-        content_area.y + (content_area.height - scaled_height) / 2.0
-    };
-
-    let rotation_degrees = if slot.rotated { 180.0 } else { 0.0 };
+    let (x, y) = calculate_alignment(content_area, scaled_width, scaled_height, slot, grid);
 
     PagePlacement {
         source_page: None, // Will be filled in by caller
         content_rect: Rect::new(x, y, scaled_width, scaled_height),
-        rotation_degrees,
+        rotation_degrees: slot.rotation_degrees(),
         scale,
         slot: slot.clone(),
     }
+}
+
+/// Calculate content alignment based on fold positions.
+///
+/// Content is pushed toward folds (where pages meet after folding)
+/// for proper alignment in the bound book.
+fn calculate_alignment(
+    content_area: &Rect,
+    scaled_width: f32,
+    scaled_height: f32,
+    slot: &SignatureSlot,
+    grid: &GridLayout,
+) -> (f32, f32) {
+    let fold_right = grid.has_fold_right(slot.grid_pos.col);
+    let fold_left = grid.has_fold_left(slot.grid_pos.col);
+    let fold_bottom = grid.has_fold_bottom(slot.grid_pos.row);
+    let fold_top = grid.has_fold_top(slot.grid_pos.row);
+
+    // Horizontal alignment
+    let x = if fold_right && !fold_left {
+        // Fold on right only: push content right
+        content_area.right() - scaled_width
+    } else if fold_left && !fold_right {
+        // Fold on left only: push content left
+        content_area.x
+    } else {
+        // No fold preference or both sides: center
+        content_area.x + (content_area.width - scaled_width) / 2.0
+    };
+
+    // Vertical alignment
+    let y = if fold_bottom && !fold_top {
+        // Fold at bottom only: push content down
+        content_area.y
+    } else if fold_top && !fold_bottom {
+        // Fold at top only: push content up
+        content_area.top() - scaled_height
+    } else {
+        // No fold preference or both: center
+        content_area.y + (content_area.height - scaled_height) / 2.0
+    };
+
+    (x, y)
 }
 
 /// Calculate all page placements for a signature side.
@@ -179,7 +220,7 @@ pub fn calculate_placements(
             // Get source dimensions (use default if blank)
             let (src_width, src_height) = source_page
                 .and_then(|idx| source_dimensions.get(idx).copied())
-                .unwrap_or((612.0, 792.0)); // Default to US Letter
+                .unwrap_or(DEFAULT_PAGE_DIMENSIONS);
 
             let mut placement = place_page(
                 &content_area,
@@ -195,6 +236,10 @@ pub fn calculate_placements(
         .collect()
 }
 
+// =============================================================================
+// Scaling
+// =============================================================================
+
 /// Calculate scale factor for fitting source to target dimensions.
 fn calculate_scale(
     src_width: f32,
@@ -203,29 +248,20 @@ fn calculate_scale(
     target_height: f32,
     mode: ScalingMode,
 ) -> f32 {
+    let scale_w = target_width / src_width;
+    let scale_h = target_height / src_height;
+
     match mode {
-        ScalingMode::Fit => {
-            let scale_w = target_width / src_width;
-            let scale_h = target_height / src_height;
-            scale_w.min(scale_h)
-        }
-        ScalingMode::Fill => {
-            let scale_w = target_width / src_width;
-            let scale_h = target_height / src_height;
-            scale_w.max(scale_h)
-        }
+        ScalingMode::Fit => scale_w.min(scale_h),
+        ScalingMode::Fill => scale_w.max(scale_h),
         ScalingMode::None => 1.0,
-        ScalingMode::Stretch => {
-            // Use width scaling (aspect ratio ignored in one dimension)
-            target_width / src_width
-        }
+        ScalingMode::Stretch => scale_w, // Use width scaling, ignore height
     }
 }
 
-/// Convert millimeters to points
-fn mm_to_pt(mm: f32) -> f32 {
-    mm * 2.83465
-}
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -243,6 +279,10 @@ mod tests {
         }
     }
 
+    fn make_grid(arrangement: PageArrangement) -> GridLayout {
+        super::super::create_grid_layout(arrangement, 800.0, 600.0, 850.0, 650.0)
+    }
+
     #[test]
     fn test_content_area_with_margins() {
         let cell = Rect::new(0.0, 0.0, 400.0, 600.0);
@@ -251,10 +291,10 @@ mod tests {
             bottom_mm: 5.0,
             fore_edge_mm: 5.0,
             spine_mm: 10.0,
+            cut_mm: 0.0,
         };
 
-        let grid =
-            super::super::create_grid_layout(PageArrangement::Folio, 800.0, 600.0, 850.0, 650.0);
+        let grid = make_grid(PageArrangement::Folio);
 
         // Left cell (col 0): fold on right = spine on right
         let slot = make_slot(0, 0, false);
@@ -269,13 +309,16 @@ mod tests {
     }
 
     #[test]
-    fn test_rotated_margins_swap() {
+    fn test_rotation_does_not_affect_margins() {
+        // Margins are applied to the cell, not the content
+        // So rotation should not change the content area
         let cell = Rect::new(0.0, 0.0, 400.0, 600.0);
         let margins = LeafMargins {
             top_mm: 5.0,
             bottom_mm: 5.0,
             fore_edge_mm: 5.0,
             spine_mm: 10.0,
+            cut_mm: 0.0,
         };
 
         // Use portrait dimensions (height > width) so spine is vertical
@@ -290,14 +333,18 @@ mod tests {
         let slot_rotated = make_slot(0, 0, true);
         let area_rotated = calculate_content_area(&cell, &margins, &slot_rotated, &grid);
 
-        // The x position should differ because left/right margins swap
-        // fore_edge = 5mm ≈ 14.17pt, spine = 10mm ≈ 28.35pt
-        // Difference should be about 14pt
+        // Content area should be the same regardless of rotation
         assert!(
-            (area_normal.x - area_rotated.x).abs() > 10.0,
-            "Expected margin swap: normal.x={}, rotated.x={}",
+            (area_normal.x - area_rotated.x).abs() < 0.01,
+            "Content areas should match: normal.x={}, rotated.x={}",
             area_normal.x,
             area_rotated.x
+        );
+        assert!(
+            (area_normal.width - area_rotated.width).abs() < 0.01,
+            "Content areas should match: normal.width={}, rotated.width={}",
+            area_normal.width,
+            area_rotated.width
         );
     }
 
@@ -315,10 +362,17 @@ mod tests {
     }
 
     #[test]
+    fn test_scale_fill() {
+        // Source is 800x600, target is 400x400
+        // To fill, we need to scale by 0.667 (height-limited, will crop width)
+        let scale = calculate_scale(800.0, 600.0, 400.0, 400.0, ScalingMode::Fill);
+        assert!((scale - 400.0 / 600.0).abs() < 0.001);
+    }
+
+    #[test]
     fn test_alignment_toward_fold() {
         let content_area = Rect::new(10.0, 10.0, 400.0, 600.0);
-        let grid =
-            super::super::create_grid_layout(PageArrangement::Folio, 800.0, 600.0, 850.0, 650.0);
+        let grid = make_grid(PageArrangement::Folio);
 
         // Left cell (col 0): fold on right, content should be pushed right
         let slot_left = make_slot(0, 0, false);
@@ -332,7 +386,7 @@ mod tests {
         );
 
         // Content should be at the right edge of content area
-        let expected_x = content_area.x + content_area.width - 300.0;
+        let expected_x = content_area.right() - 300.0;
         assert!((placement.content_rect.x - expected_x).abs() < 0.01);
 
         // Right cell (col 1): fold on left, content should be pushed left

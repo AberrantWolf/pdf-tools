@@ -1,8 +1,10 @@
 //! Output page rendering for imposition
 //!
-//! This module creates the final imposed PDF pages by placing
-//! source pages (as XObjects) with appropriate transformations.
+//! This module provides a standalone function for creating imposed PDF pages.
+//! It's exported as public API but the main imposition workflow uses
+//! `impose/sheet.rs` internally.
 
+use crate::constants::{HELVETICA_CHAR_WIDTH_RATIO, PAGE_NUMBER_FONT_SIZE, PAGE_NUMBER_OFFSET};
 use crate::layout::{PagePlacement, Rect};
 use crate::marks::{ContentBounds, MarksConfig, generate_marks};
 use crate::types::{PrinterMarks, Result};
@@ -11,7 +13,14 @@ use std::collections::HashMap;
 
 use super::xobject::create_page_xobject;
 
+// =============================================================================
+// Public API
+// =============================================================================
+
 /// Render an imposed output page.
+///
+/// This is a standalone function that can be used to create custom imposed pages.
+/// For standard imposition workflows, use `impose()` instead.
 ///
 /// # Arguments
 /// * `output` - The output document
@@ -29,6 +38,7 @@ use super::xobject::create_page_xobject;
 /// * `cell_height` - Height of each cell in points
 /// * `add_page_numbers` - Whether to add page numbers
 /// * `page_number_start` - Starting page number
+#[allow(clippy::too_many_arguments)]
 pub fn render_imposed_page(
     output: &mut Document,
     source: &Document,
@@ -64,8 +74,6 @@ pub fn render_imposed_page(
     let mut xobjects = Dictionary::new();
     let mut fonts = Dictionary::new();
     let mut xobject_cache: HashMap<ObjectId, ObjectId> = HashMap::new();
-
-    // Collect content bounds for marks
     let mut content_bounds: Vec<ContentBounds> = Vec::new();
 
     // Render each page placement
@@ -73,23 +81,19 @@ pub fn render_imposed_page(
         if let Some(source_idx) = placement.source_page {
             if source_idx < source_page_ids.len() {
                 let source_page_id = source_page_ids[source_idx];
-
-                // Create XObject for this source page
                 let xobject_name = format!("P{}", idx);
+
                 let xobject_id =
                     create_page_xobject(output, source, source_page_id, &mut xobject_cache)?;
                 xobjects.set(xobject_name.as_bytes(), Object::Reference(xobject_id));
 
-                // Generate transformation and draw command
-                let cmd = generate_placement_command(
+                content_ops.push(generate_placement_command(
                     &xobject_name,
                     &placement.content_rect,
                     placement.scale,
                     placement.rotation_degrees,
-                );
-                content_ops.push(cmd);
+                ));
 
-                // Record content bounds for marks
                 content_bounds.push(ContentBounds {
                     x: placement.content_rect.x,
                     y: placement.content_rect.y,
@@ -100,14 +104,8 @@ pub fn render_imposed_page(
         }
     }
 
-    // Generate printer's marks if enabled
-    let has_marks = marks.fold_lines
-        || marks.cut_lines
-        || marks.crop_marks
-        || marks.registration_marks
-        || marks.trim_marks;
-
-    if has_marks {
+    // Generate printer's marks
+    if marks.any_enabled() {
         let marks_config = MarksConfig {
             cols: grid_cols,
             rows: grid_rows,
@@ -119,13 +117,13 @@ pub fn render_imposed_page(
             leaf_top: leaf_bounds.top(),
             content_bounds,
         };
-        let marks_content = generate_marks(marks, &marks_config);
-        content_ops.push(marks_content);
+        content_ops.push(generate_marks(marks, &marks_config));
     }
 
-    // Add page numbers if enabled
+    // Add page numbers
     if add_page_numbers {
-        let (font_ops, font_dict) = render_page_numbers(
+        let (font_ops, font_id) = render_page_numbers(
+            output,
             placements,
             page_number_start,
             cell_width,
@@ -134,7 +132,7 @@ pub fn render_imposed_page(
             grid_rows,
         );
         content_ops.push(font_ops);
-        fonts = font_dict;
+        fonts.set("F1", Object::Reference(font_id));
     }
 
     // Set up resources
@@ -151,10 +149,12 @@ pub fn render_imposed_page(
     page_dict.set("Contents", Object::Reference(content_id));
     page_dict.set("Resources", Object::Dictionary(resources));
 
-    // Add page to document
-    let page_id = output.add_object(page_dict);
-    Ok(page_id)
+    Ok(output.add_object(page_dict))
 }
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 /// Generate the PDF content stream command to place a page.
 fn generate_placement_command(
@@ -164,8 +164,7 @@ fn generate_placement_command(
     rotation_degrees: f32,
 ) -> String {
     if rotation_degrees.abs() > 0.1 {
-        // 180° rotation: matrix is [-scale 0 0 -scale tx ty]
-        // where tx, ty is the rotation point (top-right of content)
+        // 180° rotation
         let rot_x = rect.x + rect.width;
         let rot_y = rect.y + rect.height;
         format!(
@@ -182,57 +181,52 @@ fn generate_placement_command(
 
 /// Render page numbers onto the output page.
 fn render_page_numbers(
+    output: &mut Document,
     placements: &[PagePlacement],
     page_number_start: usize,
     cell_width: f32,
     cell_height: f32,
     leaf_bounds: &Rect,
     grid_rows: usize,
-) -> (String, Dictionary) {
-    let mut ops = String::new();
-    let mut fonts = Dictionary::new();
-
-    // We need to create the font here - the caller will add it to output doc
+) -> (String, ObjectId) {
+    // Create font
     let mut font_dict = Dictionary::new();
     font_dict.set("Type", Object::Name(b"Font".to_vec()));
     font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
     font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
-    // Note: This creates an orphan dictionary - in real use, add to output doc
-    fonts.set("F1", Object::Dictionary(font_dict));
+    let font_id = output.add_object(font_dict);
 
-    let font_size = 8.0;
+    let mut ops = String::new();
 
     for placement in placements {
         if let Some(source_idx) = placement.source_page {
             let page_num = page_number_start + source_idx;
             let grid_pos = &placement.slot.grid_pos;
 
-            // Calculate cell position
             let cell_x = leaf_bounds.x + grid_pos.col as f32 * cell_width;
             let cell_y = leaf_bounds.y + (grid_rows - grid_pos.row - 1) as f32 * cell_height;
 
             let page_num_text = page_num.to_string();
 
-            if placement.rotation_degrees.abs() > 0.1 {
-                // Rotated page: position at top (appears at bottom after rotation)
+            if placement.is_rotated() {
                 let text_x = cell_x + cell_width / 2.0;
-                let text_y = cell_y + cell_height - 10.0;
+                let text_y = cell_y + cell_height - PAGE_NUMBER_OFFSET;
                 ops.push_str(&format!(
                     "q 1 0 0 1 {} {} cm -1 0 0 -1 0 0 cm BT /F1 {} Tf ({}) Tj ET Q\n",
-                    text_x, text_y, font_size, page_num_text
+                    text_x, text_y, PAGE_NUMBER_FONT_SIZE, page_num_text
                 ));
             } else {
-                // Normal page: position at bottom center
-                let text_width = page_num_text.len() as f32 * font_size * 0.5;
+                let text_width =
+                    page_num_text.len() as f32 * PAGE_NUMBER_FONT_SIZE * HELVETICA_CHAR_WIDTH_RATIO;
                 let text_x = cell_x + cell_width / 2.0 - text_width / 2.0;
-                let text_y = cell_y + 10.0;
+                let text_y = cell_y + PAGE_NUMBER_OFFSET;
                 ops.push_str(&format!(
                     "BT /F1 {} Tf {} {} Td ({}) Tj ET\n",
-                    font_size, text_x, text_y, page_num_text
+                    PAGE_NUMBER_FONT_SIZE, text_x, text_y, page_num_text
                 ));
             }
         }
     }
 
-    (ops, fonts)
+    (ops, font_id)
 }

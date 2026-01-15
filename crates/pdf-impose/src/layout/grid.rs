@@ -7,6 +7,10 @@ use crate::types::PageArrangement;
 
 use super::{GridLayout, GridPosition, Rect};
 
+// =============================================================================
+// Grid Creation
+// =============================================================================
+
 /// Create a grid layout for the given page arrangement.
 ///
 /// # Arguments
@@ -15,9 +19,6 @@ use super::{GridLayout, GridPosition, Rect};
 /// * `leaf_height_pt` - Height of the leaf area in points (after sheet margins)
 /// * `output_width_pt` - Total output sheet width in points
 /// * `output_height_pt` - Total output sheet height in points
-///
-/// # Returns
-/// A `GridLayout` describing the cell dimensions and fold/cut positions.
 pub fn create_grid_layout(
     arrangement: PageArrangement,
     leaf_width_pt: f32,
@@ -25,15 +26,19 @@ pub fn create_grid_layout(
     output_width_pt: f32,
     output_height_pt: f32,
 ) -> GridLayout {
-    let (cols, rows) = grid_dimensions(arrangement);
+    let (cols, rows) = arrangement.grid_dimensions();
 
     let cell_width_pt = leaf_width_pt / cols as f32;
     let cell_height_pt = leaf_height_pt / rows as f32;
 
     let is_landscape = output_width_pt > output_height_pt;
 
-    let (vertical_folds, horizontal_folds, vertical_cuts, horizontal_spine) =
-        fold_positions(arrangement, is_landscape);
+    let FoldCutConfig {
+        vertical_folds,
+        horizontal_folds,
+        vertical_cuts,
+        horizontal_spine,
+    } = calculate_fold_cut_config(arrangement, is_landscape);
 
     GridLayout {
         cols,
@@ -47,63 +52,73 @@ pub fn create_grid_layout(
     }
 }
 
-/// Get grid dimensions (cols, rows) for an arrangement
-pub fn grid_dimensions(arrangement: PageArrangement) -> (usize, usize) {
-    match arrangement {
-        PageArrangement::Folio => (2, 1),
-        PageArrangement::Quarto => (2, 2),
-        PageArrangement::Octavo => (4, 2),
-        PageArrangement::Custom {
-            pages_per_signature,
-        } => {
-            // For custom arrangements, use 2-up layout
-            let pages_per_side = pages_per_signature / 2;
-            if pages_per_side <= 2 {
-                (2, 1)
-            } else if pages_per_side <= 4 {
-                (2, 2)
-            } else {
-                (4, (pages_per_side + 3) / 4)
-            }
-        }
-    }
+// =============================================================================
+// Fold/Cut Configuration
+// =============================================================================
+
+/// Configuration for fold and cut positions
+struct FoldCutConfig {
+    vertical_folds: Vec<usize>,
+    horizontal_folds: Vec<usize>,
+    vertical_cuts: Vec<usize>,
+    horizontal_spine: bool,
 }
 
 /// Calculate fold and cut positions for an arrangement.
-///
-/// Returns (vertical_folds, horizontal_folds, vertical_cuts, horizontal_spine)
-fn fold_positions(
-    arrangement: PageArrangement,
-    is_landscape: bool,
-) -> (Vec<usize>, Vec<usize>, Vec<usize>, bool) {
+fn calculate_fold_cut_config(arrangement: PageArrangement, is_landscape: bool) -> FoldCutConfig {
     match arrangement {
-        PageArrangement::Folio => {
+        PageArrangement::Folio => FoldCutConfig {
             // Folio: single vertical fold in the center
-            (vec![0], vec![], vec![], false)
-        }
+            vertical_folds: vec![0],
+            horizontal_folds: vec![],
+            vertical_cuts: vec![],
+            horizontal_spine: false,
+        },
         PageArrangement::Quarto => {
             if is_landscape {
                 // Landscape quarto: spine is horizontal (between rows)
-                // Fold between rows, fold between columns
-                (vec![0], vec![0], vec![], true)
+                FoldCutConfig {
+                    vertical_folds: vec![0],
+                    horizontal_folds: vec![0],
+                    vertical_cuts: vec![],
+                    horizontal_spine: true,
+                }
             } else {
                 // Portrait quarto: spine is vertical (between columns)
-                // Fold between rows, fold between columns
-                (vec![0], vec![0], vec![], false)
+                FoldCutConfig {
+                    vertical_folds: vec![0],
+                    horizontal_folds: vec![0],
+                    vertical_cuts: vec![],
+                    horizontal_spine: false,
+                }
             }
         }
         PageArrangement::Octavo => {
             // Octavo: 4 cols x 2 rows
             // Vertical folds at cols 0 and 2, vertical CUT at col 1 (center)
             // Horizontal fold between rows
-            (vec![0, 2], vec![0], vec![1], false)
+            FoldCutConfig {
+                vertical_folds: vec![0, 2],
+                horizontal_folds: vec![0],
+                vertical_cuts: vec![1],
+                horizontal_spine: false,
+            }
         }
         PageArrangement::Custom { .. } => {
             // Generic: fold between columns
-            (vec![0], vec![], vec![], false)
+            FoldCutConfig {
+                vertical_folds: vec![0],
+                horizontal_folds: vec![],
+                vertical_cuts: vec![],
+                horizontal_spine: false,
+            }
         }
     }
 }
+
+// =============================================================================
+// Cell Calculations
+// =============================================================================
 
 /// Calculate the bounds of a cell at the given grid position.
 ///
@@ -125,17 +140,11 @@ pub fn cell_bounds(grid: &GridLayout, pos: GridPosition, leaf_origin: (f32, f32)
     Rect::new(cell_x, cell_y, grid.cell_width_pt, grid.cell_height_pt)
 }
 
-/// Check if a cell has a fold on a specific edge.
-pub fn cell_fold_edges(grid: &GridLayout, pos: GridPosition) -> CellFoldEdges {
-    CellFoldEdges {
-        left: pos.col > 0 && grid.vertical_folds.contains(&(pos.col - 1)),
-        right: grid.vertical_folds.contains(&pos.col),
-        top: pos.row > 0 && grid.horizontal_folds.contains(&(pos.row - 1)),
-        bottom: grid.horizontal_folds.contains(&pos.row),
-    }
-}
+// =============================================================================
+// Edge Information
+// =============================================================================
 
-/// Which edges of a cell are adjacent to folds
+/// Which edges of a cell have folds
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CellFoldEdges {
     pub left: bool,
@@ -146,10 +155,96 @@ pub struct CellFoldEdges {
 
 impl CellFoldEdges {
     /// Check if any edge has a fold
-    pub fn has_any(&self) -> bool {
+    pub fn any(&self) -> bool {
         self.left || self.right || self.top || self.bottom
     }
 }
+
+/// Get fold edges for a cell
+pub fn cell_fold_edges(grid: &GridLayout, pos: GridPosition) -> CellFoldEdges {
+    CellFoldEdges {
+        left: grid.has_fold_left(pos.col),
+        right: grid.has_fold_right(pos.col),
+        top: grid.has_fold_top(pos.row),
+        bottom: grid.has_fold_bottom(pos.row),
+    }
+}
+
+/// Complete edge information for a cell
+///
+/// This provides all the information needed to determine margins and
+/// printer's marks for a cell.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CellEdgeInfo {
+    // Folds
+    pub fold_left: bool,
+    pub fold_right: bool,
+    pub fold_top: bool,
+    pub fold_bottom: bool,
+
+    // Cuts
+    pub cut_left: bool,
+    pub cut_right: bool,
+    pub cut_top: bool,
+    pub cut_bottom: bool,
+
+    // Outer edges (sheet boundary)
+    pub outer_left: bool,
+    pub outer_right: bool,
+    pub outer_top: bool,
+    pub outer_bottom: bool,
+
+    // Spine orientation
+    pub horizontal_spine: bool,
+}
+
+impl CellEdgeInfo {
+    /// Returns true if the left edge is a spine fold
+    pub fn is_spine_left(&self) -> bool {
+        self.fold_left && !self.horizontal_spine
+    }
+
+    /// Returns true if the right edge is a spine fold
+    pub fn is_spine_right(&self) -> bool {
+        self.fold_right && !self.horizontal_spine
+    }
+
+    /// Returns true if the top edge is a spine fold
+    pub fn is_spine_top(&self) -> bool {
+        self.fold_top && self.horizontal_spine
+    }
+
+    /// Returns true if the bottom edge is a spine fold
+    pub fn is_spine_bottom(&self) -> bool {
+        self.fold_bottom && self.horizontal_spine
+    }
+}
+
+/// Get complete edge information for a cell
+pub fn cell_edge_info(grid: &GridLayout, pos: GridPosition) -> CellEdgeInfo {
+    CellEdgeInfo {
+        fold_left: grid.has_fold_left(pos.col),
+        fold_right: grid.has_fold_right(pos.col),
+        fold_top: grid.has_fold_top(pos.row),
+        fold_bottom: grid.has_fold_bottom(pos.row),
+
+        cut_left: grid.has_cut_left(pos.col),
+        cut_right: grid.has_cut_right(pos.col),
+        cut_top: false, // No horizontal cuts currently supported
+        cut_bottom: false,
+
+        outer_left: grid.is_outer_left(pos.col),
+        outer_right: grid.is_outer_right(pos.col),
+        outer_top: grid.is_outer_top(pos.row),
+        outer_bottom: grid.is_outer_bottom(pos.row),
+
+        horizontal_spine: grid.horizontal_spine,
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -231,5 +326,24 @@ mod tests {
         assert!(!edges.right);
         assert!(edges.top);
         assert!(!edges.bottom);
+    }
+
+    #[test]
+    fn test_cell_edge_info_outer_edges() {
+        let grid = create_grid_layout(PageArrangement::Quarto, 800.0, 600.0, 850.0, 650.0);
+
+        // Top-left is outer top and left
+        let info = cell_edge_info(&grid, GridPosition::new(0, 0));
+        assert!(info.outer_top);
+        assert!(info.outer_left);
+        assert!(!info.outer_right);
+        assert!(!info.outer_bottom);
+
+        // Bottom-right is outer bottom and right
+        let info = cell_edge_info(&grid, GridPosition::new(1, 1));
+        assert!(!info.outer_top);
+        assert!(!info.outer_left);
+        assert!(info.outer_right);
+        assert!(info.outer_bottom);
     }
 }
