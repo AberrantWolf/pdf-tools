@@ -6,22 +6,21 @@ use tokio::sync::mpsc;
 use crate::viewer::{CachedPage, DocumentSource, ViewerState, quantize_zoom};
 
 /// Render one page of a [`DocumentSource`] to RGBA bytes at `scale` (pixels per
-/// point), via the shared `junk-libs-pdfium` core. Returns the pixels, raster
-/// size, and the page's native point size. Runs inside `spawn_blocking`; the
-/// shared instance serializes the whole render sequence internally.
+/// point), via the shared `junk-libs-platen` core. Returns the pixels, raster
+/// size, and the page's native point size. Runs inside `spawn_blocking`;
+/// renders are self-contained, so concurrent calls don't serialize.
 #[cfg(feature = "pdf-viewer")]
 fn render_source_page(
     source: &DocumentSource,
     page_index: usize,
     scale: f32,
 ) -> anyhow::Result<(Vec<u8>, usize, usize, f32, f32)> {
-    let pdfium = junk_libs_pdfium::instance()?;
     let (image, (width_pts, height_pts)) = match source {
         DocumentSource::File(path) => {
-            junk_libs_pdfium::render_page_bitmap(pdfium, path, page_index, scale)?
+            junk_libs_platen::render_page_bitmap(path, page_index, scale)?
         }
         DocumentSource::Bytes(bytes) => {
-            junk_libs_pdfium::render_page_bitmap_from_bytes(pdfium, bytes, page_index, scale)?
+            junk_libs_platen::render_page_bitmap_from_bytes(bytes, page_index, scale)?
         }
     };
     let (width, height) = (image.width() as usize, image.height() as usize);
@@ -45,8 +44,7 @@ pub async fn handle_load(
 
     // Load PDF to get page count (no rendering)
     match tokio::task::spawn_blocking(move || {
-        let pdfium = junk_libs_pdfium::instance()?;
-        junk_libs_pdfium::page_count(pdfium, &path_clone)
+        Ok::<_, anyhow::Error>(junk_libs_platen::page_count(&path_clone)?)
     })
     .await
     {

@@ -1,11 +1,11 @@
-//! Consumer-side wiring test: proves that print-junk's build correctly vendors
-//! and binds `PDFium` *through the shared `junk-libs-pdfium` crate* at runtime.
-//! The render core itself is unit-tested in junk-libs; this only guards that the
-//! binary is reachable from a print-junk test binary (the "clean build doesn't
-//! prove rendering works" gotcha).
+//! Consumer-side smoke test: proves print-junk's `pdf-viewer` feature wiring
+//! renders a PDF through the shared `junk-libs-platen` crate. The render core
+//! itself is unit-tested in junk-libs; this guards the consumer dependency and
+//! feature plumbing. (Under PDFium this also had to guard a vendored binary
+//! binding at runtime — pure-Rust `platen` has nothing to bind.)
 #![cfg(all(not(target_arch = "wasm32"), feature = "pdf-viewer"))]
 
-/// Minimal valid one-page PDF (612×792), enough to bind, load, and render.
+/// Minimal valid one-page PDF (612×792), enough to load and render.
 const SAMPLE_PDF: &[u8] = b"%PDF-1.4
 1 0 obj
 <<
@@ -67,11 +67,9 @@ startxref
 ";
 
 #[test]
-fn pdfium_binds_and_renders_through_junk_libs() {
-    let pdfium = junk_libs_pdfium::instance().expect("bind vendored PDFium via junk-libs-pdfium");
-
+fn renders_through_junk_libs_platen() {
     let (image, (width_pts, height_pts)) =
-        junk_libs_pdfium::render_page_bitmap_from_bytes(pdfium, SAMPLE_PDF, 0, 1.0)
+        junk_libs_platen::render_page_bitmap_from_bytes(SAMPLE_PDF, 0, 1.0)
             .expect("render the sample PDF");
 
     // MediaBox is 612×792 pt; at scale 1.0 the raster matches in pixels.
@@ -85,7 +83,8 @@ fn pdfium_binds_and_renders_through_junk_libs() {
         image.width(),
         image.height()
     );
-    // The page has content, so the raster must contain non-blank pixels.
-    let non_zero = image.as_raw().iter().filter(|&&b| b != 0).count();
-    assert!(non_zero > 0, "rendered image was entirely zero");
+    // The page has text on a white background, so the raster must contain
+    // some non-white pixels (the glyphs).
+    let non_white = image.pixels().filter(|p| p.0[0] < 200).count();
+    assert!(non_white > 0, "rendered image was entirely blank");
 }

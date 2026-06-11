@@ -18,12 +18,12 @@ log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 
 # Hi-res figure upgrades (the `hires` feature): fetch the arXiv e-print source
-# and re-rasterize vector figures at print resolution via the shared PDFium
-# core. Optional so `--no-default-features` builds skip PDFium entirely.
+# and re-rasterize vector figures at print resolution via the shared render
+# core. Optional so `--no-default-features` builds skip the renderer entirely.
 flate2 = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
 image = { workspace = true, optional = true }
-junk-libs-pdfium = { git = "https://github.com/AberrantWolf/junk-libs", optional = true }
+junk-libs-platen = { git = "https://github.com/AberrantWolf/junk-libs", optional = true }
 
 [features]
-hires = ["dep:flate2", "dep:tar", "dep:image", "dep:junk-libs-pdfium"]
+hires = ["dep:flate2", "dep:tar", "dep:image", "dep:junk-libs-platen"]

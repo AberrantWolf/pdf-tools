@@ -20,8 +20,8 @@ authors = ["Scott Harper <scott@rynban.net>"]
 [workspace.dependencies]
 # PDF libraries
 lopdf = { version = "0.40", default-features = false }
-# PDFium rendering lives in the shared `junk-libs-pdfium` crate (a git dep of
-# print-junk-gui), which pins the binary version itself — no workspace dep here.
+# PDF rendering lives in the shared `junk-libs-platen` crate (a git dep of
+# print-junk-gui and pdf-import) — pure Rust, no binary to vendor or bundle.
 
 # GUI
 egui = "0.34"
@@ -50,7 +50,7 @@ env_logger = "0.11"
 # Leave commented for normal builds, CI, and releases (Cargo errors if the path
 # is absent, e.g. on a CI runner that only checks out print-junk).
 # [patch."https://github.com/AberrantWolf/junk-libs"]
-# junk-libs-pdfium = { path = "../junk-libs/junk-libs-pdfium" }
+# junk-libs-platen = { path = "../junk-libs/junk-libs-platen" }
 # junk-libs-egui-docview = { path = "../junk-libs/junk-libs-egui-docview" }
 
 [workspace.lints.clippy]

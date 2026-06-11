@@ -242,14 +242,11 @@ fn resolve_graphic(arg: &str, files: &HashMap<String, Vec<u8>>) -> Option<String
 /// Rasterize page 1 of a PDF figure to PNG at print resolution (capped so a
 /// huge page can't allocate unbounded memory).
 fn rasterize_pdf(bytes: &[u8]) -> Option<Vec<u8>> {
-    let pdfium = junk_libs_pdfium::instance().ok()?;
     // Probe the native size first so the scale can be capped before the real
     // render; figure pages are small, so the probe render is cheap.
-    let (_, (w_pts, h_pts)) =
-        junk_libs_pdfium::render_page_bitmap_from_bytes(pdfium, bytes, 0, 0.05).ok()?;
+    let (_, (w_pts, h_pts)) = junk_libs_platen::render_page_bitmap_from_bytes(bytes, 0, 0.05).ok()?;
     let scale = (TARGET_DPI / 72.0).min(MAX_EDGE_PX / w_pts.max(h_pts).max(1.0));
-    let (image, _) =
-        junk_libs_pdfium::render_page_bitmap_from_bytes(pdfium, bytes, 0, scale).ok()?;
+    let (image, _) = junk_libs_platen::render_page_bitmap_from_bytes(bytes, 0, scale).ok()?;
 
     let mut png = Vec::new();
     image::DynamicImage::ImageRgba8(image)

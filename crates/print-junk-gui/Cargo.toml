@@ -28,10 +28,10 @@ junk-libs-egui-docview = { git = "https://github.com/AberrantWolf/junk-libs" }
 
 # PDF rendering + typesetting (not available on WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Shared PDFium render core: vendors its own binary via build.rs, gated behind the
-# pdf-viewer feature. For local co-development against a sibling junk-libs
-# checkout, uncomment the `[patch]` in the workspace-root Cargo.toml.
-junk-libs-pdfium = { git = "https://github.com/AberrantWolf/junk-libs", optional = true }
+# Shared render core (pure-Rust hayro engine — no binary downloads or bundling),
+# gated behind the pdf-viewer feature. For local co-development against a sibling
+# junk-libs checkout, uncomment the `[patch]` in the workspace-root Cargo.toml.
+junk-libs-platen = { git = "https://github.com/AberrantWolf/junk-libs", optional = true }
 pdf-typeset = { path = "../pdf-typeset" }
 pdf-import = { path = "../pdf-import" }
 base64 = "0.22"
@@ -39,9 +39,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 
 [features]
 default = ["pdf-viewer", "hires-import"]
-pdf-viewer = ["dep:junk-libs-pdfium"]
+pdf-viewer = ["dep:junk-libs-platen"]
 # Print-resolution figure upgrades for arXiv imports (re-rasterizes vector
-# originals from the e-print source via PDFium).
+# originals from the e-print source).
 hires-import = ["pdf-import/hires"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

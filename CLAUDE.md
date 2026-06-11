@@ -9,10 +9,10 @@ Collection of PDF processing and generation tools — features wanted but not fo
 ## Commands
 
 ```bash
-# Build everything (release; junk-libs-pdfium's build script vendors PDFium automatically)
+# Build everything (release; PDF rendering is pure Rust via junk-libs-platen — no downloads)
 cargo build --release
 
-# Build without the PDF viewer (skips PDFium entirely)
+# Build without the PDF viewer
 cargo build --no-default-features
 
 # Run the apps
@@ -35,7 +35,7 @@ cargo run -p pdf-impose --example test_all_formats
 cargo run -p pdf-typeset --example sample -- /tmp/sample.pdf
 ```
 
-Note: `pdfium_render_test` (in `print-junk-gui`) requires the `pdf-viewer` feature and the vendored PDFium library; it is skipped under `--no-default-features`.
+Note: `platen_render_test` (in `print-junk-gui`) requires the `pdf-viewer` feature; it is skipped under `--no-default-features`.
 
 ## Architecture
 
@@ -72,9 +72,9 @@ Domain logic is layered: `layout/` computes page placement (arrangement, page or
 
 ### Platform matrix
 
-- Desktop (macOS/Linux/Windows): both CLI and GUI; GUI includes the PDFium-backed viewer and the Typst-backed typesetting mode.
+- Desktop (macOS/Linux/Windows): both CLI and GUI; GUI includes the platen-backed (hayro) viewer and the Typst-backed typesetting mode.
 - Web (WASM): GUI only, no viewer and no typesetting.
-- Desktop-only capabilities: the PDFium viewer (`pdf-viewer` feature) and the Typesetting mode + project save/restore (`cfg(not(target_arch = "wasm32"))`, since Typst is a large native dependency). All other functionality must work on every platform.
+- Desktop-only capabilities: the PDF viewer (`pdf-viewer` feature) and the Typesetting mode + project save/restore (`cfg(not(target_arch = "wasm32"))`, since Typst is a large native dependency). All other functionality must work on every platform.
 
 ## Terminology (print/bookbinding domain)
 
@@ -104,6 +104,6 @@ Every implementation plan must address three sections:
 
 ## Notes
 
-- PDFium rendering is provided by the shared `junk-libs-pdfium` crate (a path dep at `../junk-libs/junk-libs-pdfium`, gated behind the `pdf-viewer` feature). Its build script downloads the pinned binary (chromium/7763) into its own `OUT_DIR` and binds it at runtime — print-junk no longer downloads or links PDFium itself. To force re-download: `cargo clean -p junk-libs-pdfium`.
+- PDF rendering is provided by the shared `junk-libs-platen` crate (git dep, gated behind the `pdf-viewer` feature) — a pure-Rust engine (hayro), so there is nothing to download, bundle, or bind at runtime, and pages can render in parallel.
 - Releases are tag-driven: bump version in root `Cargo.toml` `[workspace.package]`, then push a `vX.Y.Z` tag — the GitHub release workflow builds all platforms. See `INSTALL.md` for runtime/build dependencies.
 - `Imposition Details.md` contains in-depth reference on imposition math and arrangements.

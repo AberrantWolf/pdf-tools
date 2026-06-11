@@ -3,9 +3,9 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// PDFium binding and page rendering live in the shared `junk-libs-pdfium` crate
-// (driven from `handlers::viewer`). This module keeps only the UI-agnostic render
-// *cache* and document registry — no PDFium types appear here.
+// Page rendering lives in the shared `junk-libs-platen` crate (driven from
+// `handlers::viewer`). This module keeps only the UI-agnostic render *cache*
+// and document registry — no renderer types appear here.
 
 /// Cached page data
 #[cfg(feature = "pdf-viewer")]

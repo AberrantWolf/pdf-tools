@@ -25,10 +25,9 @@ fn main() {
         res.compile().expect("Failed to compile Windows resources");
     }
 
-    // PDFium downloading/linking now lives in the `junk-libs-pdfium` build
-    // script (it vendors the matching binary into its own OUT_DIR and binds at
-    // runtime via PDFIUM_LIB_DIR). This build script only generates icon assets
-    // and embeds Windows resources.
+    // This build script only generates icon assets and embeds Windows
+    // resources. PDF rendering is pure Rust (junk-libs-platen) — nothing to
+    // download or link.
 }
 
 fn generate_icons(workspace_root: &Path, manifest_dir: &Path) {

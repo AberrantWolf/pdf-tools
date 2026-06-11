@@ -12,15 +12,13 @@ Collection of PDF processing and generation tools built with Rust.
 
 Download the latest release for your platform from the [Releases page](https://github.com/AberrantWolf/print-junk/releases).
 
-Extract the archive and keep all files in the same directory — the GUI needs the bundled PDFium library alongside it to run.
+Both binaries are self-contained — PDF rendering is pure Rust, nothing extra to keep alongside them.
 
 | Platform | Prerequisites |
 |----------|---------------|
 | 🍎 **macOS** | None. If Gatekeeper blocks the app, right-click → "Open" or run `xattr -cr print-junk-gui` |
 | 🪟 **Windows** | [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) (likely already installed) |
-| 🐧 **Linux** | A few system libraries — see [INSTALL.md](INSTALL.md) for package names |
-
-> 💡 The `pdft` CLI binary has no extra dependencies and works standalone without PDFium.
+| 🐧 **Linux** | A few system libraries (GUI only) — see [INSTALL.md](INSTALL.md) for package names |
 
 ## 🚀 Quick Start
 
