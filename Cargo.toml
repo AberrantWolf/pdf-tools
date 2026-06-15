@@ -49,9 +49,9 @@ env_logger = "0.11"
 # print-junk against your working copy instead of the pinned GitHub revision.
 # Leave commented for normal builds, CI, and releases (Cargo errors if the path
 # is absent, e.g. on a CI runner that only checks out print-junk).
-# [patch."https://github.com/AberrantWolf/junk-libs"]
-# junk-libs-platen = { path = "../junk-libs/junk-libs-platen" }
-# junk-libs-egui-docview = { path = "../junk-libs/junk-libs-egui-docview" }
+[patch."https://github.com/AberrantWolf/junk-libs"]
+junk-libs-platen = { path = "../junk-libs/junk-libs-platen" }
+junk-libs-egui-docview = { path = "../junk-libs/junk-libs-egui-docview" }
 
 [workspace.lints.clippy]
 # Correctness & suspicious code
