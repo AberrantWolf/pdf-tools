@@ -8,22 +8,24 @@ use eframe::egui;
 use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, vec2};
 
 // --- Palette: spot inks on an ink ground ------------------------------------
+// The subset used by custom-painted surfaces (e.g. the preview "press bed") is
+// `pub(crate)` so it stays the single source of truth for the theme's colors.
 /// Warm near-black ground for panels.
 const INK: Color32 = Color32::from_rgb(21, 20, 15);
 /// Slightly raised ink for windows / popups (subtle depth against [`INK`]).
 const INK_RAISED: Color32 = Color32::from_rgb(30, 28, 22);
-/// Deepest ink for insets: text fields, slider troughs.
-const INK_DEEP: Color32 = Color32::from_rgb(14, 13, 10);
+/// Deepest ink for insets and the preview press bed.
+pub(crate) const INK_DEEP: Color32 = Color32::from_rgb(14, 13, 10);
 /// Resting fill for interactive widgets (buttons, combo boxes).
 const INK_WIDGET: Color32 = Color32::from_rgb(38, 36, 28);
 /// Primary text — warm paper stock.
-const PAPER: Color32 = Color32::from_rgb(231, 224, 207);
+pub(crate) const PAPER: Color32 = Color32::from_rgb(231, 224, 207);
 /// Secondary text / labels — newsprint gray.
-const NEWSPRINT: Color32 = Color32::from_rgb(154, 148, 134);
+pub(crate) const NEWSPRINT: Color32 = Color32::from_rgb(154, 148, 134);
 /// Hairline rules and widget outlines — warm, low-contrast.
-const HAIRLINE: Color32 = Color32::from_rgb(58, 55, 45);
+pub(crate) const HAIRLINE: Color32 = Color32::from_rgb(58, 55, 45);
 /// Registration vermilion — the active/selected spot ink.
-const VERMILION: Color32 = Color32::from_rgb(210, 59, 42);
+pub(crate) const VERMILION: Color32 = Color32::from_rgb(210, 59, 42);
 /// A darker vermilion that paper text still reads on (selection fills).
 const VERMILION_INK: Color32 = Color32::from_rgb(120, 40, 30);
 /// Brass furniture — the hover/secondary highlight.
