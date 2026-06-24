@@ -1,4 +1,4 @@
-use pdf_flashcards::{FlashcardOptions, MeasurementSystem};
+use pdf_flashcards::{Duplex, FlashcardOptions, MeasurementSystem};
 use pdf_units::PaperSize;
 
 /// Layout calculator for flashcard grid sizing
@@ -84,7 +84,8 @@ impl FlashcardLayout {
             columns: self.columns,
             row_spacing_mm: self.measurement_system.to_mm(self.row_spacing),
             column_spacing_mm: self.measurement_system.to_mm(self.column_spacing),
-            font_size_pt: 12.0, // Default, will be overridden
+            font_size_pt: 12.0,        // Default, will be overridden
+            duplex: Duplex::default(), // Does not affect grid sizing.
         }
     }
 }

@@ -25,6 +25,10 @@ pub enum FlashcardWarning {
     },
     /// The CSV file contained no usable flashcard rows
     EmptyCsv,
+    /// The card grid is wider than the printable area; cards will overflow the page.
+    GridWiderThanPrintable,
+    /// The card grid is taller than the printable area; cards will overflow the page.
+    GridTallerThanPrintable,
 }
 
 impl std::fmt::Display for FlashcardWarning {
@@ -41,6 +45,18 @@ impl std::fmt::Display for FlashcardWarning {
                 write!(
                     f,
                     "CSV file contained no usable flashcard rows (need at least 2 columns per row)"
+                )
+            }
+            FlashcardWarning::GridWiderThanPrintable => {
+                write!(
+                    f,
+                    "Card grid is wider than the printable area — reduce columns, card width, spacing, or side margins"
+                )
+            }
+            FlashcardWarning::GridTallerThanPrintable => {
+                write!(
+                    f,
+                    "Card grid is taller than the printable area — reduce rows, card height, spacing, or top/bottom margins"
                 )
             }
         }

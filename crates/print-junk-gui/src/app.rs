@@ -293,6 +293,12 @@ impl eframe::App for PrintJunkApp {
                         .command_tx
                         .send(PdfCommand::FlashcardsLoadCsv { input_path: path });
                 }
+                Mode::Flashcards if ext == "json" => {
+                    log::info!("Loading flashcard layout/deck: {}", path.display());
+                    let _ = self
+                        .command_tx
+                        .send(PdfCommand::FlashcardsLoadConfig { path });
+                }
                 _ if ext == "pdf" => {
                     log::info!("Loading PDF: {}", path.display());
                     let _ = self.command_tx.send(PdfCommand::ViewerLoad { path });
@@ -396,10 +402,11 @@ impl eframe::App for PrintJunkApp {
                         total,
                     });
                 }
-                PdfUpdate::FlashcardsLoaded { cards } => {
+                PdfUpdate::FlashcardsLoaded { cards, warnings } => {
                     log::info!("Loaded {} flashcards from CSV", cards.len());
                     self.progress = None;
                     self.flashcard_state.cards = cards;
+                    self.flashcard_state.load_warnings = warnings;
                     self.flashcard_state.needs_regeneration = true;
                 }
                 PdfUpdate::FlashcardsComplete { path, card_count } => {
@@ -414,10 +421,11 @@ impl eframe::App for PrintJunkApp {
                 PdfUpdate::FlashcardsConfigLoaded { options, cards } => {
                     self.flashcard_state.apply_options(&options);
                     if let Some(cards) = cards {
-                        log::info!("Loaded project with {} cards", cards.len());
+                        log::info!("Loaded deck with {} cards", cards.len());
                         self.flashcard_state.cards = cards;
                         self.flashcard_state.csv_path.clear();
                         self.flashcard_state.paste_text.clear();
+                        self.flashcard_state.load_warnings.clear();
                     } else {
                         log::info!("Applied layout template");
                     }

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 // Re-export types from library crates
-pub use pdf_flashcards::{Flashcard, FlashcardOptions};
+pub use pdf_flashcards::{Flashcard, FlashcardOptions, FlashcardWarning};
 #[cfg(not(target_arch = "wasm32"))]
 pub use pdf_import::{ArchiveStatus, AssetReport};
 pub use pdf_impose::{ImpositionOptions, ImpositionStatistics};
@@ -160,6 +160,7 @@ pub enum PdfUpdate {
     },
     FlashcardsLoaded {
         cards: Vec<Flashcard>,
+        warnings: Vec<FlashcardWarning>,
     },
     FlashcardsComplete {
         path: PathBuf,

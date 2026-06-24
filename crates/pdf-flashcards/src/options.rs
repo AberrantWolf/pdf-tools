@@ -33,6 +33,22 @@ impl MeasurementSystem {
 
 use crate::types::{FlashcardError, Result};
 
+/// How the printed sheet is flipped for two-sided printing, mirroring the
+/// terminology of OS print dialogs so the user can simply match their printer.
+///
+/// The back of each card is positioned as the mirror of its front about the page
+/// centre, so card backs line up behind their fronts after the sheet is flipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Duplex {
+    /// Two-sided, flip on the long edge: backs mirror left↔right (the default).
+    #[default]
+    LongEdge,
+    /// Two-sided, flip on the short edge: backs mirror top↔bottom.
+    ShortEdge,
+    /// Single-sided: only the fronts are printed.
+    OneSided,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlashcardOptions {
     pub page_width_mm: f32,
@@ -48,6 +64,10 @@ pub struct FlashcardOptions {
     pub row_spacing_mm: f32,
     pub column_spacing_mm: f32,
     pub font_size_pt: f32,
+    /// Two-sided printing / flip mode. Defaults to long-edge for backward
+    /// compatibility with layouts/decks saved before this field existed.
+    #[serde(default)]
+    pub duplex: Duplex,
 }
 
 impl Default for FlashcardOptions {
@@ -66,6 +86,7 @@ impl Default for FlashcardOptions {
             row_spacing_mm: 5.0,
             column_spacing_mm: 5.0,
             font_size_pt: 12.0,
+            duplex: Duplex::LongEdge,
         }
     }
 }

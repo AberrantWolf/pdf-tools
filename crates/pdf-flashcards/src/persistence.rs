@@ -1,11 +1,14 @@
-//! Saving and loading flashcard layouts.
+//! Saving and loading flashcard files.
 //!
 //! Two on-disk shapes are supported, both JSON:
 //!
 //! - A **layout** is just a [`FlashcardOptions`] — a reusable, content-independent
-//!   page template (page size, margins, card size, grid, spacing, font).
-//! - A **project** is a [`FlashcardProject`] — a layout bundled with its card
-//!   content, so a whole working set can be reopened and regenerated.
+//!   page template (page size, margins, card size, grid, spacing, font, duplex).
+//! - A **deck** is a [`FlashcardDeck`] — a layout bundled with its card content,
+//!   so a whole working set can be reopened and regenerated.
+//!
+//! ("Deck" is deliberately distinct from the app-level *project* `.pjproj`, which
+//! persists every mode's settings and file paths rather than card content.)
 //!
 //! [`load_flashcard_file`] reads either shape and reports which it found.
 
@@ -13,12 +16,12 @@ use crate::options::FlashcardOptions;
 use crate::types::{Flashcard, FlashcardError, Result};
 use std::path::Path;
 
-/// A complete flashcard project: a page layout together with its card content.
+/// A complete flashcard deck: a page layout together with its card content.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FlashcardProject {
+pub struct FlashcardDeck {
     /// Page layout / arrangement options.
     pub options: FlashcardOptions,
-    /// The flashcards this project was saved with.
+    /// The flashcards this deck was saved with.
     pub cards: Vec<Flashcard>,
 }
 
@@ -36,8 +39,8 @@ impl FlashcardOptions {
     }
 }
 
-impl FlashcardProject {
-    /// Save this project (layout + cards) to a JSON file.
+impl FlashcardDeck {
+    /// Save this deck (layout + cards) to a JSON file.
     pub async fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         write_json(self, path).await
     }
@@ -45,28 +48,28 @@ impl FlashcardProject {
 
 /// The two shapes [`load_flashcard_file`] can produce.
 #[derive(Debug, Clone)]
-pub enum LoadedLayout {
+pub enum LoadedFile {
     /// A layout-only template; the caller should keep any existing cards.
     Layout(FlashcardOptions),
-    /// A full project; the caller should replace its cards with these.
-    Project(FlashcardProject),
+    /// A full deck; the caller should replace its cards with these.
+    Deck(FlashcardDeck),
 }
 
-/// Load a flashcard file, auto-detecting whether it is a full project (layout +
+/// Load a flashcard file, auto-detecting whether it is a full deck (layout +
 /// cards) or a layout-only template.
 ///
-/// A project is tried first: its JSON object has `options` and `cards` keys that
-/// a flat layout file lacks, so the two shapes are unambiguous.
-pub async fn load_flashcard_file(path: impl AsRef<Path>) -> Result<LoadedLayout> {
+/// A deck is tried first: its JSON object has `options` and `cards` keys that a
+/// flat layout file lacks, so the two shapes are unambiguous.
+pub async fn load_flashcard_file(path: impl AsRef<Path>) -> Result<LoadedFile> {
     let bytes = tokio::fs::read(path).await?;
 
-    if let Ok(project) = serde_json::from_slice::<FlashcardProject>(&bytes) {
-        return Ok(LoadedLayout::Project(project));
+    if let Ok(deck) = serde_json::from_slice::<FlashcardDeck>(&bytes) {
+        return Ok(LoadedFile::Deck(deck));
     }
 
     let options = serde_json::from_slice::<FlashcardOptions>(&bytes)
         .map_err(|e| FlashcardError::Config(format!("Failed to parse layout file: {e}")))?;
-    Ok(LoadedLayout::Layout(options))
+    Ok(LoadedFile::Layout(options))
 }
 
 #[cfg(test)]
@@ -74,11 +77,11 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn project_round_trips_with_cards() {
+    async fn deck_round_trips_with_cards() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.json");
+        let path = dir.path().join("deck.json");
 
-        let project = FlashcardProject {
+        let deck = FlashcardDeck {
             options: FlashcardOptions::default(),
             cards: vec![
                 Flashcard {
@@ -91,14 +94,14 @@ mod tests {
                 },
             ],
         };
-        project.save(&path).await.unwrap();
+        deck.save(&path).await.unwrap();
 
         match load_flashcard_file(&path).await.unwrap() {
-            LoadedLayout::Project(loaded) => {
+            LoadedFile::Deck(loaded) => {
                 assert_eq!(loaded.cards.len(), 2);
                 assert_eq!(loaded.cards[0].front, "front");
             }
-            LoadedLayout::Layout(_) => panic!("expected a project, got a layout"),
+            LoadedFile::Layout(_) => panic!("expected a deck, got a layout"),
         }
     }
 
@@ -115,11 +118,34 @@ mod tests {
         options.save(&path).await.unwrap();
 
         match load_flashcard_file(&path).await.unwrap() {
-            LoadedLayout::Layout(loaded) => {
+            LoadedFile::Layout(loaded) => {
                 assert_eq!(loaded.rows, 4);
                 assert_eq!(loaded.columns, 5);
             }
-            LoadedLayout::Project(_) => panic!("expected a layout, got a project"),
+            LoadedFile::Deck(_) => panic!("expected a layout, got a deck"),
+        }
+    }
+
+    #[tokio::test]
+    async fn layout_saved_before_duplex_existed_still_loads() {
+        // A layout JSON without the `duplex` field must deserialize (serde
+        // default), keeping old saved files working.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old_layout.json");
+        let legacy = r#"{
+            "page_width_mm": 215.9, "page_height_mm": 279.4,
+            "margin_top_mm": 10, "margin_bottom_mm": 10,
+            "margin_left_mm": 10, "margin_right_mm": 10,
+            "card_width_mm": 60, "card_height_mm": 90,
+            "rows": 2, "columns": 2,
+            "row_spacing_mm": 5, "column_spacing_mm": 5,
+            "font_size_pt": 12
+        }"#;
+        tokio::fs::write(&path, legacy).await.unwrap();
+
+        match load_flashcard_file(&path).await.unwrap() {
+            LoadedFile::Layout(o) => assert_eq!(o.duplex, crate::options::Duplex::LongEdge),
+            LoadedFile::Deck(_) => panic!("expected a layout"),
         }
     }
 }

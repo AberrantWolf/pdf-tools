@@ -1,4 +1,4 @@
-use crate::options::FlashcardOptions;
+use crate::options::{Duplex, FlashcardOptions};
 use crate::types::{Flashcard, FlashcardError, Result};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use pdf_units::{mm_to_pt, pt_to_mm};
@@ -214,6 +214,91 @@ fn embed_font(
     doc.add_object(type0)
 }
 
+/// Bottom-left corner (mm, PDF coordinates with y measured from the page bottom)
+/// of the front-side cell at grid position `(row, col)`.
+fn front_cell_origin(options: &FlashcardOptions, row: usize, col: usize) -> (f32, f32) {
+    let x =
+        options.margin_left_mm + col as f32 * (options.card_width_mm + options.column_spacing_mm);
+    let y = options.page_height_mm
+        - options.margin_top_mm
+        - (row + 1) as f32 * options.card_height_mm
+        - row as f32 * options.row_spacing_mm;
+    (x, y)
+}
+
+/// Bottom-left corner (mm) of the back-side cell whose front is at `(front_x,
+/// front_y)`. The back is the mirror of the front about the page centre, so card
+/// backs align behind their fronts once the sheet is flipped — for a long-edge
+/// flip that mirrors horizontally, for a short-edge flip vertically. Mirroring
+/// the *position* (rather than swapping margins) keeps backs aligned regardless
+/// of margins or how much slack the grid leaves on the page.
+fn back_cell_origin(options: &FlashcardOptions, front_x: f32, front_y: f32) -> (f32, f32) {
+    match options.duplex {
+        Duplex::LongEdge => (
+            options.page_width_mm - front_x - options.card_width_mm,
+            front_y,
+        ),
+        Duplex::ShortEdge => (
+            front_x,
+            options.page_height_mm - front_y - options.card_height_mm,
+        ),
+        // No back is drawn for one-sided output; return the front position so the
+        // function is total.
+        Duplex::OneSided => (front_x, front_y),
+    }
+}
+
+/// Append PDF text operators that draw `text` horizontally centred in the card
+/// cell whose bottom-left corner is `(cell_x, cell_y)` (mm), vertically centred
+/// for the given font size.
+fn draw_card_text(
+    ops: &mut String,
+    text: &str,
+    face: &ttf_parser::Face<'_>,
+    options: &FlashcardOptions,
+    cell_x: f32,
+    cell_y: f32,
+) {
+    let center_x = cell_x + options.card_width_mm / 2.0;
+    let baseline_y = cell_y + (options.card_height_mm - options.font_size_pt * 25.4 / 72.0) / 2.0;
+    let text_width_mm = pt_to_mm(measure_text_width(text, face, options.font_size_pt));
+    let x = center_x - text_width_mm / 2.0;
+    let hex = encode_text_hex(text, face);
+    let _ = writeln!(
+        ops,
+        "BT /F1 {} Tf {} {} Td <{hex}> Tj ET",
+        options.font_size_pt,
+        mm_to_pt(x),
+        mm_to_pt(baseline_y)
+    );
+}
+
+/// Add a single page backed by `content_id` and return its object id.
+fn add_page(
+    doc: &mut Document,
+    pages_tree_id: ObjectId,
+    resources_id: ObjectId,
+    content_id: ObjectId,
+    page_width_pt: f32,
+    page_height_pt: f32,
+) -> ObjectId {
+    let mut page = Dictionary::new();
+    page.set("Type", Object::Name(b"Page".to_vec()));
+    page.set("Parent", Object::Reference(pages_tree_id));
+    page.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(page_width_pt),
+            Object::Real(page_height_pt),
+        ]),
+    );
+    page.set("Resources", Object::Reference(resources_id));
+    page.set("Contents", Object::Reference(content_id));
+    doc.add_object(page)
+}
+
 fn generate_flashcard_pdf_bytes(
     cards: &[Flashcard],
     options: &FlashcardOptions,
@@ -244,6 +329,8 @@ fn generate_flashcard_pdf_bytes(
 
     let mut page_refs = Vec::new();
 
+    let double_sided = options.duplex != Duplex::OneSided;
+
     for chunk in cards.chunks(cards_per_page) {
         let mut front_ops = String::new();
         let mut back_ops = String::new();
@@ -252,97 +339,47 @@ fn generate_flashcard_pdf_bytes(
             let row = i / options.columns;
             let col = i % options.columns;
 
-            // Front side positioning
-            let cell_x_front = options.margin_left_mm
-                + col as f32 * (options.card_width_mm + options.column_spacing_mm);
-            let cell_y_front = options.page_height_mm
-                - options.margin_top_mm
-                - (row + 1) as f32 * options.card_height_mm
-                - row as f32 * options.row_spacing_mm;
-
-            let center_x_front = cell_x_front + options.card_width_mm / 2.0;
-            let y_front =
-                cell_y_front + (options.card_height_mm - options.font_size_pt * 25.4 / 72.0) / 2.0;
-
-            let text_width_front = measure_text_width(&card.front, &face, options.font_size_pt);
-            let text_width_mm_front = pt_to_mm(text_width_front);
-            let x_front = center_x_front - text_width_mm_front / 2.0;
-
-            let hex_front = encode_text_hex(&card.front, &face);
-            let x_pt = mm_to_pt(x_front);
-            let y_pt = mm_to_pt(y_front);
-            let _ = writeln!(
-                front_ops,
-                "BT /F1 {} Tf {} {} Td <{hex_front}> Tj ET",
-                options.font_size_pt, x_pt, y_pt
+            let (front_x, front_y) = front_cell_origin(options, row, col);
+            draw_card_text(
+                &mut front_ops,
+                &card.front,
+                &face,
+                options,
+                front_x,
+                front_y,
             );
 
-            // Back side positioning (mirrored horizontally)
-            let mirrored_col = options.columns - 1 - col;
-            let cell_x_back = options.margin_right_mm
-                + mirrored_col as f32 * (options.card_width_mm + options.column_spacing_mm);
-            let cell_y_back = cell_y_front;
-
-            let center_x_back = cell_x_back + options.card_width_mm / 2.0;
-            let y_back =
-                cell_y_back + (options.card_height_mm - options.font_size_pt * 25.4 / 72.0) / 2.0;
-
-            let text_width_back = measure_text_width(&card.back, &face, options.font_size_pt);
-            let text_width_mm_back = pt_to_mm(text_width_back);
-            let x_back = center_x_back - text_width_mm_back / 2.0;
-
-            let hex_back = encode_text_hex(&card.back, &face);
-            let x_pt = mm_to_pt(x_back);
-            let y_pt = mm_to_pt(y_back);
-            let _ = writeln!(
-                back_ops,
-                "BT /F1 {} Tf {} {} Td <{hex_back}> Tj ET",
-                options.font_size_pt, x_pt, y_pt
-            );
+            if double_sided {
+                let (back_x, back_y) = back_cell_origin(options, front_x, front_y);
+                draw_card_text(&mut back_ops, &card.back, &face, options, back_x, back_y);
+            }
         }
 
-        // Create content streams
-        let front_stream = Stream::new(Dictionary::new(), front_ops.into_bytes());
-        let front_content_id = doc.add_object(front_stream);
-
-        let back_stream = Stream::new(Dictionary::new(), back_ops.into_bytes());
-        let back_content_id = doc.add_object(back_stream);
-
-        // Create front page
-        let mut front_page = Dictionary::new();
-        front_page.set("Type", Object::Name(b"Page".to_vec()));
-        front_page.set("Parent", Object::Reference(pages_tree_id));
-        front_page.set(
-            "MediaBox",
-            Object::Array(vec![
-                Object::Integer(0),
-                Object::Integer(0),
-                Object::Real(page_width_pt),
-                Object::Real(page_height_pt),
-            ]),
+        let front_content_id =
+            doc.add_object(Stream::new(Dictionary::new(), front_ops.into_bytes()));
+        let front_page_id = add_page(
+            &mut doc,
+            pages_tree_id,
+            resources_id,
+            front_content_id,
+            page_width_pt,
+            page_height_pt,
         );
-        front_page.set("Resources", Object::Reference(resources_id));
-        front_page.set("Contents", Object::Reference(front_content_id));
-        let front_page_id = doc.add_object(front_page);
         page_refs.push(Object::Reference(front_page_id));
 
-        // Create back page
-        let mut back_page = Dictionary::new();
-        back_page.set("Type", Object::Name(b"Page".to_vec()));
-        back_page.set("Parent", Object::Reference(pages_tree_id));
-        back_page.set(
-            "MediaBox",
-            Object::Array(vec![
-                Object::Integer(0),
-                Object::Integer(0),
-                Object::Real(page_width_pt),
-                Object::Real(page_height_pt),
-            ]),
-        );
-        back_page.set("Resources", Object::Reference(resources_id));
-        back_page.set("Contents", Object::Reference(back_content_id));
-        let back_page_id = doc.add_object(back_page);
-        page_refs.push(Object::Reference(back_page_id));
+        if double_sided {
+            let back_content_id =
+                doc.add_object(Stream::new(Dictionary::new(), back_ops.into_bytes()));
+            let back_page_id = add_page(
+                &mut doc,
+                pages_tree_id,
+                resources_id,
+                back_content_id,
+                page_width_pt,
+                page_height_pt,
+            );
+            page_refs.push(Object::Reference(back_page_id));
+        }
     }
 
     // Finalize document structure
@@ -366,4 +403,102 @@ fn generate_flashcard_pdf_bytes(
         .map_err(|e| FlashcardError::Pdf(format!("Failed to save PDF: {e}")))?;
 
     Ok(writer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> FlashcardOptions {
+        FlashcardOptions {
+            page_width_mm: 200.0,
+            page_height_mm: 300.0,
+            card_width_mm: 60.0,
+            card_height_mm: 90.0,
+            ..FlashcardOptions::default()
+        }
+    }
+
+    #[test]
+    fn long_edge_back_mirrors_horizontally() {
+        let o = FlashcardOptions {
+            duplex: Duplex::LongEdge,
+            ..opts()
+        };
+        let (fx, fy) = front_cell_origin(&o, 0, 0);
+        let (bx, by) = back_cell_origin(&o, fx, fy);
+        // Back column is the horizontal mirror of the front; rows are unchanged.
+        assert!((bx - (o.page_width_mm - fx - o.card_width_mm)).abs() < 1e-3);
+        assert!((by - fy).abs() < 1e-3);
+    }
+
+    #[test]
+    fn short_edge_back_mirrors_vertically() {
+        let o = FlashcardOptions {
+            duplex: Duplex::ShortEdge,
+            ..opts()
+        };
+        let (fx, fy) = front_cell_origin(&o, 0, 0);
+        let (bx, by) = back_cell_origin(&o, fx, fy);
+        // Back row is the vertical mirror of the front; columns are unchanged.
+        assert!((bx - fx).abs() < 1e-3);
+        assert!((by - (o.page_height_mm - fy - o.card_height_mm)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn back_alignment_survives_a_round_trip_flip() {
+        // After physically flipping the sheet, a back cell must land exactly on
+        // its front cell. Flipping long-edge negates x about the page centre.
+        let o = FlashcardOptions {
+            duplex: Duplex::LongEdge,
+            ..opts()
+        };
+        let (fx, fy) = front_cell_origin(&o, 1, 1);
+        let (bx, by) = back_cell_origin(&o, fx, fy);
+        let flipped_back_x = o.page_width_mm - bx - o.card_width_mm;
+        assert!((flipped_back_x - fx).abs() < 1e-3);
+        assert!((by - fy).abs() < 1e-3);
+    }
+
+    #[test]
+    fn one_sided_emits_only_front_pages() {
+        let o = FlashcardOptions {
+            rows: 1,
+            columns: 1,
+            duplex: Duplex::OneSided,
+            ..opts()
+        };
+        let cards = vec![
+            Flashcard {
+                front: "a".into(),
+                back: "1".into(),
+            },
+            Flashcard {
+                front: "b".into(),
+                back: "2".into(),
+            },
+        ];
+        let bytes = generate_flashcard_pdf_bytes(&cards, &o).unwrap();
+        let doc = Document::load_mem(&bytes).unwrap();
+        // 2 cards, 1 per sheet, one-sided => 2 pages (no backs).
+        assert_eq!(doc.get_pages().len(), 2);
+    }
+
+    #[test]
+    fn double_sided_emits_front_and_back_pages() {
+        let o = FlashcardOptions {
+            rows: 1,
+            columns: 1,
+            duplex: Duplex::LongEdge,
+            ..opts()
+        };
+        let cards = vec![Flashcard {
+            front: "a".into(),
+            back: "1".into(),
+        }];
+        let bytes = generate_flashcard_pdf_bytes(&cards, &o).unwrap();
+        let doc = Document::load_mem(&bytes).unwrap();
+        // 1 card, double-sided => front + back = 2 pages.
+        assert_eq!(doc.get_pages().len(), 2);
+    }
 }

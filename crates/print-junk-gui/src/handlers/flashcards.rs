@@ -8,7 +8,7 @@ pub async fn handle_load_csv(input_path: PathBuf, update_tx: &mpsc::UnboundedSen
             for w in &warnings {
                 log::warn!("Flashcard CSV: {w}");
             }
-            let _ = update_tx.send(PdfUpdate::FlashcardsLoaded { cards });
+            let _ = update_tx.send(PdfUpdate::FlashcardsLoaded { cards, warnings });
         }
         Err(e) => {
             let _ = update_tx.send(PdfUpdate::Error {
@@ -19,21 +19,21 @@ pub async fn handle_load_csv(input_path: PathBuf, update_tx: &mpsc::UnboundedSen
 }
 
 pub async fn handle_load_config(path: PathBuf, update_tx: &mpsc::UnboundedSender<PdfUpdate>) {
-    use pdf_flashcards::LoadedLayout;
+    use pdf_flashcards::LoadedFile;
 
     match pdf_flashcards::load_flashcard_file(&path).await {
-        Ok(LoadedLayout::Project(project)) => {
+        Ok(LoadedFile::Deck(deck)) => {
             log::info!(
-                "Loaded flashcard project ({} cards) from {}",
-                project.cards.len(),
+                "Loaded flashcard deck ({} cards) from {}",
+                deck.cards.len(),
                 path.display()
             );
             let _ = update_tx.send(PdfUpdate::FlashcardsConfigLoaded {
-                options: project.options,
-                cards: Some(project.cards),
+                options: deck.options,
+                cards: Some(deck.cards),
             });
         }
-        Ok(LoadedLayout::Layout(options)) => {
+        Ok(LoadedFile::Layout(options)) => {
             log::info!("Loaded flashcard layout from {}", path.display());
             let _ = update_tx.send(PdfUpdate::FlashcardsConfigLoaded {
                 options,
