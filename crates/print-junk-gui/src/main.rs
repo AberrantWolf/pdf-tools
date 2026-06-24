@@ -8,6 +8,7 @@ mod logger;
 #[cfg(not(target_arch = "wasm32"))]
 mod project;
 mod startup;
+mod theme;
 mod ui_components;
 mod viewer;
 mod views;
@@ -78,6 +79,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             setup_fonts(&cc.egui_ctx);
+            theme::apply(&cc.egui_ctx);
             Ok(Box::new(app::PrintJunkApp::new(cc, handle)))
         }),
     )
@@ -99,6 +101,7 @@ pub async fn wasm_main() {
             web_options,
             Box::new(|cc| {
                 setup_fonts(&cc.egui_ctx);
+                theme::apply(&cc.egui_ctx);
                 Ok(Box::new(app::PrintJunkApp::new(cc)))
             }),
         )
