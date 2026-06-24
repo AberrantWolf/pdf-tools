@@ -19,8 +19,8 @@ mod outline;
 
 use super::ViewerState;
 use crate::ui_components::{
-    STANDARD_PAPER_SIZES, enum_combo, enum_selector, form, form_row, form_row_info,
-    labeled_drag_clamped, num_field, section_heading,
+    STANDARD_PAPER_SIZES, enum_combo, enum_selector, form, form_row, form_row_info, num_field,
+    section_heading,
 };
 
 /// A document imported from a URL / arXiv id / file. The raw HTML and the assets
@@ -562,29 +562,35 @@ fn margins_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 fn fonts_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
     section_heading(ui, "Body text");
     let mut changed = false;
-    changed |= font_family_picker(
-        ui,
-        "ts_body_font",
-        "Font",
-        &mut state.config.body_font.family,
-        &state.available_fonts,
-    );
-    changed |= labeled_drag_clamped(
-        ui,
-        "Size",
-        &mut state.config.body_font.size_pt,
-        5.0..=32.0,
-        " pt",
-    );
-    changed |= color_row(ui, "Color", &mut state.config.body_color);
-    changed |= color_row(ui, "Link color", &mut state.config.link_color);
-    changed |= color_row(ui, "Code color", &mut state.config.code_color);
-    changed |= optional_color_row(
-        ui,
-        "Code background",
-        &mut state.config.code_background,
-        Color::new(244, 244, 244),
-    );
+    form(ui, "ts_body", |ui| {
+        changed |= form_row(ui, "Font", |ui| {
+            font_combo(
+                ui,
+                "ts_body_font",
+                &mut state.config.body_font.family,
+                &state.available_fonts,
+            )
+        });
+        changed |= form_row(ui, "Size", |ui| {
+            num_field(ui, &mut state.config.body_font.size_pt, 5.0..=32.0, " pt")
+        });
+        changed |= form_row(ui, "Color", |ui| {
+            color_field(ui, &mut state.config.body_color)
+        });
+        changed |= form_row(ui, "Link color", |ui| {
+            color_field(ui, &mut state.config.link_color)
+        });
+        changed |= form_row(ui, "Code color", |ui| {
+            color_field(ui, &mut state.config.code_color)
+        });
+        changed |= form_row(ui, "Code bg", |ui| {
+            optional_color_field(
+                ui,
+                &mut state.config.code_background,
+                Color::new(244, 244, 244),
+            )
+        });
+    });
     if changed {
         state.needs_regeneration = true;
     }
@@ -610,29 +616,46 @@ fn headings_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
         }
     });
 
+    ui.add_space(2.0);
+
     let lvl = state.heading_edit_level;
     let available = &state.available_fonts;
     let st = &mut state.config.heading_styles[usize::from(lvl - 1)];
-
-    changed |= font_family_picker(ui, "ts_heading_font", "Font", &mut st.family, available);
-    changed |= labeled_drag_clamped(ui, "Size", &mut st.size_pt, 6.0..=72.0, " pt");
-    ui.horizontal(|ui| {
-        changed |= ui.checkbox(&mut st.bold, "Bold").changed();
-        changed |= ui.checkbox(&mut st.italic, "Italic").changed();
-    });
-    changed |= color_row(ui, "Color", &mut st.color);
-
     let aligns = [
         (HAlign::Left, "Left"),
         (HAlign::Center, "Center"),
         (HAlign::Right, "Right"),
     ];
-    changed |= enum_selector(ui, "ts_heading_align", "Align", &mut st.align, &aligns);
-    changed |= labeled_drag_clamped(ui, "Space above", &mut st.space_above_mm, 0.0..=40.0, " mm");
-    changed |= labeled_drag_clamped(ui, "Space below", &mut st.space_below_mm, 0.0..=40.0, " mm");
-    changed |= ui
-        .checkbox(&mut st.start_new_page, "Start on new page (chapter)")
-        .changed();
+
+    form(ui, "ts_heading", |ui| {
+        changed |= form_row(ui, "Font", |ui| {
+            font_combo(ui, "ts_heading_font", &mut st.family, available)
+        });
+        changed |= form_row(ui, "Size", |ui| {
+            num_field(ui, &mut st.size_pt, 6.0..=72.0, " pt")
+        });
+        changed |= form_row(ui, "Style", |ui| {
+            let mut c = ui.checkbox(&mut st.bold, "Bold").changed();
+            c |= ui.checkbox(&mut st.italic, "Italic").changed();
+            c
+        });
+        changed |= form_row(ui, "Color", |ui| color_field(ui, &mut st.color));
+        changed |= form_row(ui, "Align", |ui| {
+            enum_combo(ui, "ts_heading_align", &mut st.align, &aligns)
+        });
+        changed |= form_row(ui, "Space above", |ui| {
+            num_field(ui, &mut st.space_above_mm, 0.0..=40.0, " mm")
+        });
+        changed |= form_row(ui, "Space below", |ui| {
+            num_field(ui, &mut st.space_below_mm, 0.0..=40.0, " mm")
+        });
+        changed |= form_row_info(
+            ui,
+            "New page",
+            "Start this heading on a new page (e.g. chapters)",
+            |ui| ui.checkbox(&mut st.start_new_page, "").changed(),
+        );
+    });
 
     if changed {
         state.needs_regeneration = true;
@@ -643,30 +666,35 @@ fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
     section_heading(ui, "Tables");
     let t = &mut state.config.table;
     let mut changed = false;
-
-    changed |= ui.checkbox(&mut t.header_bold, "Bold header row").changed();
-    changed |= optional_color_row(
-        ui,
-        "Header fill",
-        &mut t.header_fill,
-        Color::new(230, 230, 230),
-    );
-    changed |= optional_color_row(
-        ui,
-        "Zebra striping",
-        &mut t.zebra_fill,
-        Color::new(244, 244, 244),
-    );
-
     let borders = [
         (TableBorder::All, "All"),
         (TableBorder::Horizontal, "Horizontal"),
         (TableBorder::None, "None"),
     ];
-    changed |= enum_selector(ui, "ts_table_border", "Borders", &mut t.border, &borders);
-    changed |= labeled_drag_clamped(ui, "Border width", &mut t.border_width_pt, 0.0..=3.0, " pt");
-    changed |= color_row(ui, "Border color", &mut t.border_color);
-    changed |= labeled_drag_clamped(ui, "Cell padding", &mut t.cell_padding_mm, 0.0..=8.0, " mm");
+
+    form(ui, "ts_table", |ui| {
+        changed |= form_row(ui, "Bold header", |ui| {
+            ui.checkbox(&mut t.header_bold, "").changed()
+        });
+        changed |= form_row(ui, "Header fill", |ui| {
+            optional_color_field(ui, &mut t.header_fill, Color::new(230, 230, 230))
+        });
+        changed |= form_row_info(ui, "Zebra", "Shade alternating rows", |ui| {
+            optional_color_field(ui, &mut t.zebra_fill, Color::new(244, 244, 244))
+        });
+        changed |= form_row(ui, "Borders", |ui| {
+            enum_combo(ui, "ts_table_border", &mut t.border, &borders)
+        });
+        changed |= form_row(ui, "Border width", |ui| {
+            num_field(ui, &mut t.border_width_pt, 0.0..=3.0, " pt")
+        });
+        changed |= form_row(ui, "Border color", |ui| {
+            color_field(ui, &mut t.border_color)
+        });
+        changed |= form_row(ui, "Cell padding", |ui| {
+            num_field(ui, &mut t.cell_padding_mm, 0.0..=8.0, " mm")
+        });
+    });
 
     if changed {
         state.needs_regeneration = true;
@@ -678,142 +706,110 @@ fn document_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
     let c = &mut state.config;
     let mut changed = false;
 
-    ui.horizontal(|ui| {
-        ui.label("Title");
-        changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut c.doc_title)
-                    .desired_width(180.0)
-                    .hint_text("(none)"),
-            )
-            .changed();
+    form(ui, "ts_doc", |ui| {
+        changed |= form_row(ui, "Title", |ui| text_field(ui, &mut c.doc_title, "(none)"));
+        changed |= form_row(ui, "Author", |ui| text_field(ui, &mut c.doc_author, ""));
+        changed |= form_row(ui, "Keywords", |ui| {
+            text_field(ui, &mut c.doc_keywords, "comma, separated")
+        });
+        changed |= form_row_info(
+            ui,
+            "Language",
+            "BCP-47 code; controls hyphenation and quotes",
+            |ui| text_field(ui, &mut c.lang, "en"),
+        );
+        changed |= form_row(ui, "Contents", |ui| {
+            ui.checkbox(&mut c.generate_toc, "").changed()
+        });
+        if c.generate_toc {
+            changed |= form_row(ui, "TOC depth", |ui| {
+                num_field(ui, &mut c.toc_depth, 1..=6, "")
+            });
+        }
+        changed |= form_row_info(
+            ui,
+            "Smart quotes",
+            "Curly quotes and typographic dashes",
+            |ui| ui.checkbox(&mut c.smart_punctuation, "").changed(),
+        );
     });
-    ui.horizontal(|ui| {
-        ui.label("Author");
-        changed |= ui
-            .add(egui::TextEdit::singleline(&mut c.doc_author).desired_width(180.0))
-            .changed();
-    });
-    ui.horizontal(|ui| {
-        ui.label("Keywords");
-        changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut c.doc_keywords)
-                    .desired_width(180.0)
-                    .hint_text("comma, separated"),
-            )
-            .changed();
-    });
+
+    ui.add_space(2.0);
     ui.label(
         egui::RichText::new("A title page is added when a title is set.")
             .small()
             .weak(),
     );
 
-    changed |= ui
-        .checkbox(&mut c.generate_toc, "Table of contents")
-        .changed();
-    if c.generate_toc {
-        changed |= labeled_drag_clamped(ui, "TOC depth", &mut c.toc_depth, 1..=6, "");
-    }
-    changed |= ui
-        .checkbox(&mut c.smart_punctuation, "Smart punctuation")
-        .on_hover_text("Curly quotes and typographic dashes")
-        .changed();
-    ui.horizontal(|ui| {
-        ui.label("Language");
-        changed |= ui
-            .add(
-                egui::TextEdit::singleline(&mut c.lang)
-                    .desired_width(60.0)
-                    .hint_text("en"),
-            )
-            .on_hover_text("BCP-47 code; controls hyphenation and quotes")
-            .changed();
-    });
-
     if changed {
         state.needs_regeneration = true;
     }
 }
 
-/// A labeled sRGB color swatch button. Returns `true` if the color changed.
-fn color_row(ui: &mut egui::Ui, label: &str, color: &mut Color) -> bool {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        let mut rgb = [color.r, color.g, color.b];
-        if ui.color_edit_button_srgb(&mut rgb).changed() {
-            *color = Color::new(rgb[0], rgb[1], rgb[2]);
-            true
-        } else {
-            false
-        }
-    })
-    .inner
+/// Control-only single-line text field filling the row width, for a [`form_row`].
+fn text_field(ui: &mut egui::Ui, value: &mut String, hint: &str) -> bool {
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .desired_width(ui.available_width())
+            .hint_text(hint),
+    )
+    .changed()
 }
 
-/// A checkbox that toggles an optional color on/off, with a swatch when enabled.
+/// Control-only sRGB color swatch (no label) for a [`form_row`] control.
+fn color_field(ui: &mut egui::Ui, color: &mut Color) -> bool {
+    let mut rgb = [color.r, color.g, color.b];
+    if ui.color_edit_button_srgb(&mut rgb).changed() {
+        *color = Color::new(rgb[0], rgb[1], rgb[2]);
+        true
+    } else {
+        false
+    }
+}
+
+/// Control-only optional color: an enable checkbox, plus a swatch when on.
 /// `default` seeds the color when first enabled.
-fn optional_color_row(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut Option<Color>,
-    default: Color,
-) -> bool {
+fn optional_color_field(ui: &mut egui::Ui, value: &mut Option<Color>, default: Color) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        let mut enabled = value.is_some();
-        if ui.checkbox(&mut enabled, label).changed() {
-            *value = enabled.then_some(default);
-            changed = true;
-        }
-        if let Some(color) = value.as_mut() {
-            let mut rgb = [color.r, color.g, color.b];
-            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                *color = Color::new(rgb[0], rgb[1], rgb[2]);
-                changed = true;
-            }
-        }
-    });
+    let mut enabled = value.is_some();
+    if ui.checkbox(&mut enabled, "").changed() {
+        *value = enabled.then_some(default);
+        changed = true;
+    }
+    if let Some(color) = value.as_mut() {
+        changed |= color_field(ui, color);
+    }
     changed
 }
 
-/// A combo box over installed font families, with a leading "(default)" entry
-/// that maps to an empty family (engine picks a serif).
-fn font_family_picker(
-    ui: &mut egui::Ui,
-    id: &str,
-    label: &str,
-    family: &mut String,
-    available: &[String],
-) -> bool {
+/// Control-only font-family combo (no label), filling the row width, with a
+/// leading "(default)" entry that maps to an empty family.
+fn font_combo(ui: &mut egui::Ui, id: &str, family: &mut String, available: &[String]) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        let selected = if family.is_empty() {
-            "(default)".to_string()
-        } else {
-            family.clone()
-        };
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(selected)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(family.is_empty(), "(default)")
-                    .clicked()
-                    && !family.is_empty()
-                {
-                    family.clear();
+    let selected = if family.is_empty() {
+        "(default)".to_string()
+    } else {
+        family.clone()
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_label(family.is_empty(), "(default)")
+                .clicked()
+                && !family.is_empty()
+            {
+                family.clear();
+                changed = true;
+            }
+            for fam in available {
+                if ui.selectable_label(family == fam, fam).clicked() && family != fam {
+                    family.clone_from(fam);
                     changed = true;
                 }
-                for fam in available {
-                    if ui.selectable_label(family == fam, fam).clicked() && family != fam {
-                        family.clone_from(fam);
-                        changed = true;
-                    }
-                }
-            });
-    });
+            }
+        });
     changed
 }
 
@@ -821,23 +817,23 @@ fn spacing_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
     section_heading(ui, "Spacing");
     let c = &mut state.config;
     let mut changed = false;
-    changed |= labeled_drag_clamped(ui, "Line leading", &mut c.line_spacing_em, 0.0..=2.0, " em");
-    changed |= labeled_drag_clamped(
-        ui,
-        "Paragraph gap",
-        &mut c.paragraph_spacing_mm,
-        0.0..=20.0,
-        " mm",
-    );
-    changed |= labeled_drag_clamped(
-        ui,
-        "First-line indent",
-        &mut c.paragraph_indent_mm,
-        0.0..=30.0,
-        " mm",
-    );
-    changed |= ui.checkbox(&mut c.justify, "Justify text").changed();
-    changed |= ui.checkbox(&mut c.hyphenate, "Hyphenate").changed();
+    form(ui, "ts_spacing", |ui| {
+        changed |= form_row(ui, "Line leading", |ui| {
+            num_field(ui, &mut c.line_spacing_em, 0.0..=2.0, " em")
+        });
+        changed |= form_row(ui, "Paragraph gap", |ui| {
+            num_field(ui, &mut c.paragraph_spacing_mm, 0.0..=20.0, " mm")
+        });
+        changed |= form_row_info(ui, "Indent", "First-line paragraph indent", |ui| {
+            num_field(ui, &mut c.paragraph_indent_mm, 0.0..=30.0, " mm")
+        });
+        changed |= form_row(ui, "Justify", |ui| {
+            ui.checkbox(&mut c.justify, "").changed()
+        });
+        changed |= form_row(ui, "Hyphenate", |ui| {
+            ui.checkbox(&mut c.hyphenate, "").changed()
+        });
+    });
     if changed {
         state.needs_regeneration = true;
     }
