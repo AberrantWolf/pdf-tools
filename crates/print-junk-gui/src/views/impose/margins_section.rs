@@ -2,53 +2,80 @@ use eframe::egui;
 use pdf_impose::CreepConfig;
 
 use super::state::ImposeState;
-use crate::ui_components::{LeafMarginsEditor, SheetMarginsEditor};
+use crate::ui_components::{form, form_row, form_row_info, num_field, section};
 
 pub fn show(ui: &mut egui::Ui, state: &mut ImposeState) {
-    egui::CollapsingHeader::new("📏 Margins")
-        .default_open(false)
-        .show(ui, |ui| {
-            let mut changed = false;
+    section(ui, "imp_margins_sec", "Margins", false, |ui| {
+        let mut changed = false;
 
-            ui.label("Sheet margins (printer-safe area):")
-                .on_hover_text("Margins inside the printable area of the physical sheet");
-            ui.indent("sheet_margins", |ui| {
-                changed |= SheetMarginsEditor::new(
-                    &mut state.options.margins.sheet.top_mm,
-                    &mut state.options.margins.sheet.bottom_mm,
-                    &mut state.options.margins.sheet.left_mm,
-                    &mut state.options.margins.sheet.right_mm,
-                    25.0,
-                )
-                .show(ui);
+        ui.label("Sheet margins (printer-safe area)")
+            .on_hover_text("Margins inside the printable area of the physical sheet");
+        {
+            let s = &mut state.options.margins.sheet;
+            form(ui, "imp_sheet_margins", |ui| {
+                changed |= form_row(ui, "Top", |ui| {
+                    num_field(ui, &mut s.top_mm, 0.0..=25.0, " mm")
+                });
+                changed |= form_row(ui, "Bottom", |ui| {
+                    num_field(ui, &mut s.bottom_mm, 0.0..=25.0, " mm")
+                });
+                changed |= form_row(ui, "Left", |ui| {
+                    num_field(ui, &mut s.left_mm, 0.0..=25.0, " mm")
+                });
+                changed |= form_row(ui, "Right", |ui| {
+                    num_field(ui, &mut s.right_mm, 0.0..=25.0, " mm")
+                });
             });
+        }
 
+        ui.add_space(8.0);
+
+        ui.label("Leaf margins (trim & gutter)")
+            .on_hover_text("Margins around each book page within its cell on the sheet");
+        {
+            let l = &mut state.options.margins.leaf;
+            form(ui, "imp_leaf_margins", |ui| {
+                changed |=
+                    form_row_info(ui, "Head", "Margin at the top (head) of the page", |ui| {
+                        num_field(ui, &mut l.top_mm, 0.0..=50.0, " mm")
+                    });
+                changed |= form_row_info(
+                    ui,
+                    "Foot",
+                    "Margin at the bottom (tail/foot) of the page",
+                    |ui| num_field(ui, &mut l.bottom_mm, 0.0..=50.0, " mm"),
+                );
+                changed |= form_row_info(
+                    ui,
+                    "Fore-edge",
+                    "Margin on the side opposite the spine",
+                    |ui| num_field(ui, &mut l.fore_edge_mm, 0.0..=50.0, " mm"),
+                );
+                changed |= form_row_info(
+                    ui,
+                    "Spine",
+                    "Margin at the spine, where pages are bound together",
+                    |ui| num_field(ui, &mut l.spine_mm, 0.0..=50.0, " mm"),
+                );
+                changed |= form_row_info(
+                    ui,
+                    "Trim",
+                    "Extra material around fold edges, trimmed away after binding (3 mm standard)",
+                    |ui| num_field(ui, &mut l.trim_allowance_mm, 0.0..=50.0, " mm"),
+                );
+            });
+        }
+
+        // Creep compensation (only for signature-based bindings)
+        if state.options.binding_type.uses_signatures() {
             ui.add_space(8.0);
+            changed |= show_creep_section(ui, state);
+        }
 
-            ui.label("Leaf margins (trim & gutter):")
-                .on_hover_text("Margins around each book page within its cell on the sheet");
-            ui.indent("leaf_margins", |ui| {
-                changed |= LeafMarginsEditor::new(
-                    &mut state.options.margins.leaf.top_mm,
-                    &mut state.options.margins.leaf.bottom_mm,
-                    &mut state.options.margins.leaf.fore_edge_mm,
-                    &mut state.options.margins.leaf.spine_mm,
-                    &mut state.options.margins.leaf.trim_allowance_mm,
-                    50.0,
-                )
-                .show(ui);
-            });
-
-            // Creep compensation (only for signature-based bindings)
-            if state.options.binding_type.uses_signatures() {
-                ui.add_space(8.0);
-                changed |= show_creep_section(ui, state);
-            }
-
-            if changed {
-                state.needs_regeneration = true;
-            }
-        });
+        if changed {
+            state.needs_regeneration = true;
+        }
+    });
 }
 
 fn show_creep_section(ui: &mut egui::Ui, state: &mut ImposeState) -> bool {

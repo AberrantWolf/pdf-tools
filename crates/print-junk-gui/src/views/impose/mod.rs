@@ -24,49 +24,19 @@ pub fn show_impose(
         .min_size(300.0)
         .show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("PDF Imposition");
-                ui.separator();
+                ui.heading("Impose");
+                ui.add_space(2.0);
 
                 input_section::show(ui, state, command_tx);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 binding_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 output_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 cascade_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 margins_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 marks_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 additional_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
                 statistics_section::show(ui, state);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
 
+                crate::ui_components::section_heading(ui, "Output");
                 actions_section::show(ui, state, command_tx);
             });
         });

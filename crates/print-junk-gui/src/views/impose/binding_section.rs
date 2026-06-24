@@ -2,29 +2,28 @@ use eframe::egui;
 use pdf_impose::{BindingType, PageArrangement};
 
 use super::state::ImposeState;
+use crate::ui_components::section;
 
 pub fn show(ui: &mut egui::Ui, state: &mut ImposeState) {
-    egui::CollapsingHeader::new("📖 Binding & Arrangement")
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.label("Binding type:");
-            if show_binding_type_selector(ui, &mut state.options.binding_type) {
-                log::info!("Binding type changed to: {:?}", state.options.binding_type);
-                state.needs_regeneration = true;
-            }
+    section(ui, "imp_binding_sec", "Binding", true, |ui| {
+        ui.label("Binding type:");
+        if show_binding_type_selector(ui, &mut state.options.binding_type) {
+            log::info!("Binding type changed to: {:?}", state.options.binding_type);
+            state.needs_regeneration = true;
+        }
 
-            ui.add_space(5.0);
+        ui.add_space(5.0);
 
-            if state.options.binding_type.uses_signatures()
-                && show_arrangement_selector(
-                    ui,
-                    &mut state.options.page_arrangement,
-                    &mut state.options.sheets_per_signature,
-                )
-            {
-                state.needs_regeneration = true;
-            }
-        });
+        if state.options.binding_type.uses_signatures()
+            && show_arrangement_selector(
+                ui,
+                &mut state.options.page_arrangement,
+                &mut state.options.sheets_per_signature,
+            )
+        {
+            state.needs_regeneration = true;
+        }
+    });
 }
 
 fn show_binding_type_selector(ui: &mut egui::Ui, binding_type: &mut BindingType) -> bool {
