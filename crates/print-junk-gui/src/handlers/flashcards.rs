@@ -2,13 +2,17 @@ use pdf_async_runtime::PdfUpdate;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-pub async fn handle_load_csv(input_path: PathBuf, update_tx: &mpsc::UnboundedSender<PdfUpdate>) {
-    match pdf_flashcards::load_from_csv(&input_path).await {
-        Ok((cards, warnings)) => {
+pub async fn handle_load_csv(
+    input_path: PathBuf,
+    has_headers: bool,
+    update_tx: &mpsc::UnboundedSender<PdfUpdate>,
+) {
+    match pdf_flashcards::load_table_from_csv(&input_path, has_headers).await {
+        Ok((table, warnings)) => {
             for w in &warnings {
                 log::warn!("Flashcard CSV: {w}");
             }
-            let _ = update_tx.send(PdfUpdate::FlashcardsLoaded { cards, warnings });
+            let _ = update_tx.send(PdfUpdate::FlashcardsTableLoaded { table, warnings });
         }
         Err(e) => {
             let _ = update_tx.send(PdfUpdate::Error {

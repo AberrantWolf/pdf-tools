@@ -1,14 +1,19 @@
+use std::path::PathBuf;
+
 use eframe::egui;
 use pdf_async_runtime::PdfCommand;
-use pdf_flashcards::{Duplex, FlashcardWarning, MeasurementSystem};
+use pdf_flashcards::{ColumnRole, CsvTable, Duplex, FlashcardWarning, MeasurementSystem};
 use pdf_units::PaperSize;
 use tokio::sync::mpsc;
 
 use super::ViewerState;
 use crate::ui_components::{
-    STANDARD_PAPER_SIZES, enum_combo, form, form_row, form_row_enabled, form_row_info, num_field,
-    section, section_heading,
+    STANDARD_PAPER_SIZES, button_group, enum_combo, form, form_row, form_row_enabled,
+    form_row_info, num_field, section, section_heading,
 };
+
+/// Multiple columns assigned to one side are stacked on separate lines.
+const COLUMN_SEPARATOR: &str = "\n";
 
 mod flashcard_layout;
 use flashcard_layout::{FlashcardLayout, MaxValueType, convert_values, get_max_value};
@@ -32,9 +37,21 @@ pub enum SizingMode {
 pub struct FlashcardState {
     pub csv_path: String,
 
+    // Whether the loaded CSV/paste's first row names the columns (vs. being data).
+    pub csv_has_headers: bool,
+
+    // Per-column assignment to the card's front/back (or ignore). Persisted so a
+    // reloaded project re-maps the same way; reconciled to the table's column
+    // count on load.
+    pub column_roles: Vec<ColumnRole>,
+
     // Pasted card text — a transient input alternative to a CSV file; not persisted.
     #[serde(skip)]
     pub paste_text: String,
+
+    // The parsed source table (re-loaded from `csv_path`/paste; not persisted).
+    #[serde(skip)]
+    pub csv_table: Option<CsvTable>,
 
     pub paper_size: PaperSize,
     pub measurement_system: MeasurementSystem,
@@ -85,7 +102,10 @@ impl Default for FlashcardState {
         let measurement_system = MeasurementSystem::Inches;
         Self {
             csv_path: String::new(),
+            csv_has_headers: true,
+            column_roles: Vec::new(),
             paste_text: String::new(),
+            csv_table: None,
             paper_size: PaperSize::Letter,
             measurement_system,
             sizing_mode: SizingMode::Grid,
@@ -110,6 +130,27 @@ impl Default for FlashcardState {
 }
 
 impl FlashcardState {
+    /// Adopt a freshly parsed source table: reconcile the column roles to its
+    /// column count (keeping the user's mapping when it still fits, e.g. across a
+    /// header-toggle re-parse), then project cards.
+    pub fn set_table(&mut self, table: CsvTable, warnings: Vec<FlashcardWarning>) {
+        if self.column_roles.len() != table.columns.len() {
+            self.column_roles = table.default_roles();
+        }
+        self.csv_table = Some(table);
+        self.load_warnings = warnings;
+        self.reproject_cards();
+    }
+
+    /// Rebuild the cards from the current table and column roles. No-op when no
+    /// table is loaded (e.g. a deck supplied cards directly).
+    pub fn reproject_cards(&mut self) {
+        let Some(table) = &self.csv_table else { return };
+        let cards = table.to_cards(&self.column_roles, COLUMN_SEPARATOR);
+        self.cards = cards;
+        self.needs_regeneration = true;
+    }
+
     pub fn to_options(&self) -> pdf_flashcards::FlashcardOptions {
         let (page_width_mm, page_height_mm) = self.paper_size.dimensions_mm();
         pdf_flashcards::FlashcardOptions {
@@ -221,6 +262,11 @@ pub fn show_flashcards(
                 section(ui, "fc_input_sec", "Input", true, |ui| {
                     show_input_section(ui, state, command_tx);
                 });
+                if state.csv_table.is_some() {
+                    section(ui, "fc_columns_sec", "Columns", true, |ui| {
+                        show_columns_section(ui, state);
+                    });
+                }
                 section(ui, "fc_page_sec", "Page", true, |ui| {
                     show_paper_section(ui, state);
                 });
@@ -266,13 +312,29 @@ fn show_input_section(
                 .pick_file()
         {
             state.csv_path = path.display().to_string();
+            // A file is assumed to have a header row; the toggle below overrides.
+            state.csv_has_headers = true;
             log::info!("Loading CSV: {}", path.display());
-            let _ = command_tx.send(PdfCommand::FlashcardsLoadCsv { input_path: path });
+            let _ = command_tx.send(PdfCommand::FlashcardsLoadCsv {
+                input_path: path,
+                has_headers: true,
+            });
         }
     });
 
+    // The header toggle lives with the input controls so it can be set before
+    // (or after) loading; changing it re-parses whatever source is loaded.
+    if ui
+        .checkbox(&mut state.csv_has_headers, "First row is a header")
+        .on_hover_text("Treat the first row as column names rather than card data")
+        .changed()
+        && state.csv_table.is_some()
+    {
+        reload_source(state, command_tx);
+    }
+
     ui.add_space(8.0);
-    ui.label("Or paste cards (one per line, front,back):");
+    ui.label("Or paste cards (one per line, e.g. front,back):");
     ui.add(
         egui::TextEdit::multiline(&mut state.paste_text)
             .desired_rows(4)
@@ -286,12 +348,12 @@ fn show_input_section(
         )
         .clicked()
     {
-        let (cards, warnings) = pdf_flashcards::parse_cards(&state.paste_text);
-        log::info!("Loaded {} cards from pasted text", cards.len());
-        state.cards = cards;
-        state.load_warnings = warnings;
+        // Pasted rows are assumed to be data (no header); the toggle overrides.
+        state.csv_has_headers = false;
         state.csv_path.clear();
-        state.needs_regeneration = true;
+        let (table, warnings) = pdf_flashcards::parse_pasted_table(&state.paste_text, false);
+        log::info!("Loaded {} row(s) from pasted text", table.rows.len());
+        state.set_table(table, warnings);
     }
 
     if !state.cards.is_empty() {
@@ -300,24 +362,65 @@ fn show_input_section(
     show_load_warnings(ui, &state.load_warnings);
 }
 
+/// Re-parse the currently loaded source with the current header setting — used
+/// when the "First row is a header" toggle changes.
+fn reload_source(state: &mut FlashcardState, command_tx: &mpsc::UnboundedSender<PdfCommand>) {
+    if !state.csv_path.is_empty() {
+        let _ = command_tx.send(PdfCommand::FlashcardsLoadCsv {
+            input_path: PathBuf::from(state.csv_path.clone()),
+            has_headers: state.csv_has_headers,
+        });
+    } else if !state.paste_text.trim().is_empty() {
+        let (table, warnings) =
+            pdf_flashcards::parse_pasted_table(&state.paste_text, state.csv_has_headers);
+        state.set_table(table, warnings);
+    }
+}
+
+/// Map each detected column to the card's front, back, or neither.
+fn show_columns_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
+    let role_opts = [
+        (ColumnRole::Front, "Front"),
+        (ColumnRole::Back, "Back"),
+        (ColumnRole::Ignore, "Ignore"),
+    ];
+
+    // Column names are cloned so the roles can be edited alongside (a few short
+    // strings; avoids holding a borrow on `csv_table` across the role edits).
+    let columns = state
+        .csv_table
+        .as_ref()
+        .map(|t| t.columns.clone())
+        .unwrap_or_default();
+
+    let mut roles_changed = false;
+    form(ui, "fc_columns", |ui| {
+        for (i, name) in columns.iter().enumerate() {
+            roles_changed |= form_row(ui, name, |ui| {
+                button_group(ui, &mut state.column_roles[i], &role_opts)
+            });
+        }
+    });
+
+    if roles_changed {
+        state.reproject_cards();
+    }
+
+    if !state.column_roles.contains(&ColumnRole::Front) {
+        ui.colored_label(WARN_COLOR, "⚠ No column assigned to the front");
+    }
+    if state.duplex != Duplex::OneSided && !state.column_roles.contains(&ColumnRole::Back) {
+        ui.colored_label(WARN_COLOR, "⚠ No column assigned to the back");
+    }
+}
+
 /// Compact, amber summary of the most recent load's warnings.
 fn show_load_warnings(ui: &mut egui::Ui, warnings: &[FlashcardWarning]) {
     if warnings
         .iter()
         .any(|w| matches!(w, FlashcardWarning::EmptyCsv))
     {
-        ui.colored_label(WARN_COLOR, "⚠ No usable cards (need 2 columns per row)");
-        return;
-    }
-    let skipped = warnings
-        .iter()
-        .filter(|w| matches!(w, FlashcardWarning::CsvRowSkipped { .. }))
-        .count();
-    if skipped > 0 {
-        ui.colored_label(
-            WARN_COLOR,
-            format!("⚠ {skipped} row(s) skipped (need 2 columns)"),
-        );
+        ui.colored_label(WARN_COLOR, "⚠ No data rows found");
     }
 }
 

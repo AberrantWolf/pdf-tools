@@ -34,8 +34,11 @@ async fn process_command(
     update_tx: &mpsc::UnboundedSender<PdfUpdate>,
 ) {
     match cmd {
-        PdfCommand::FlashcardsLoadCsv { input_path } => {
-            handlers::flashcards::handle_load_csv(input_path, update_tx).await;
+        PdfCommand::FlashcardsLoadCsv {
+            input_path,
+            has_headers,
+        } => {
+            handlers::flashcards::handle_load_csv(input_path, has_headers, update_tx).await;
         }
         PdfCommand::FlashcardsGenerate {
             cards,

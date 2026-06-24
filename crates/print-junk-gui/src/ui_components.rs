@@ -182,6 +182,24 @@ where
     changed
 }
 
+/// A horizontal group of selectable "pills" for an enum, all in one cell —
+/// for the control of a [`form_row`] when seeing every option at once beats a
+/// dropdown (e.g. a 3-way Front/Back/Ignore choice).
+pub fn button_group<T>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool
+where
+    T: PartialEq + Clone,
+{
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        for (option_value, option_text) in options {
+            changed |= ui
+                .selectable_value(value, option_value.clone(), *option_text)
+                .changed();
+        }
+    });
+    changed
+}
+
 /// Enum selector using `ComboBox`
 pub fn enum_selector<T>(
     ui: &mut egui::Ui,

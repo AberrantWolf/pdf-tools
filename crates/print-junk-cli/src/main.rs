@@ -400,10 +400,14 @@ async fn main() -> Result<()> {
             card_width_in,
             card_height_in,
         } => {
-            let (cards, csv_warnings) = pdf_flashcards::load_from_csv(&input).await?;
+            // The CLI uses the default column mapping (first column → front,
+            // second → back, rest ignored) on a header-bearing CSV; the GUI
+            // exposes per-column control.
+            let (table, csv_warnings) = pdf_flashcards::load_table_from_csv(&input, true).await?;
             for w in &csv_warnings {
                 eprintln!("Warning: {w}");
             }
+            let cards = table.to_cards(&table.default_roles(), "\n");
 
             if cards.is_empty() {
                 eprintln!("No flashcards to generate");

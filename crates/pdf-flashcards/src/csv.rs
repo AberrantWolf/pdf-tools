@@ -1,133 +1,143 @@
-use crate::types::{Flashcard, FlashcardWarning, Result};
+use crate::table::CsvTable;
+use crate::types::{FlashcardWarning, Result};
 use std::path::Path;
 
-/// Load flashcards from a CSV file on disk.
+/// Load a CSV file into a [`CsvTable`].
 ///
-/// Each row must have at least two columns (`front`, `back`); the first row is
-/// treated as a header and skipped. Rows with fewer than two columns are
-/// skipped with a warning rather than failing the whole load.
-pub async fn load_from_csv(
+/// With `has_headers`, the first row names the columns; otherwise every row is
+/// data and columns are named `Col1`..`ColN`. Mapping columns to card sides is a
+/// separate step (see [`CsvTable::to_cards`]).
+pub async fn load_table_from_csv(
     path: impl AsRef<Path>,
-) -> Result<(Vec<Flashcard>, Vec<FlashcardWarning>)> {
+    has_headers: bool,
+) -> Result<(CsvTable, Vec<FlashcardWarning>)> {
     let path = path.as_ref().to_owned();
 
-    log::info!("Loading flashcards from {}", path.display());
+    log::info!("Loading flashcard table from {}", path.display());
     let contents = tokio::fs::read_to_string(&path).await?;
 
-    let (cards, warnings) =
-        tokio::task::spawn_blocking(move || parse_records(&contents, b',', true)).await?;
+    let (table, warnings) =
+        tokio::task::spawn_blocking(move || parse_table(&contents, b',', has_headers)).await?;
 
-    log::info!("Loaded {} flashcards", cards.len());
+    log::info!(
+        "Loaded {} column(s), {} row(s)",
+        table.columns.len(),
+        table.rows.len()
+    );
 
-    Ok((cards, warnings))
+    Ok((table, warnings))
 }
 
-/// Parse flashcards from pasted text (one card per line, `front<delimiter>back`).
-///
-/// The delimiter is auto-detected: tab if any line contains one, otherwise
-/// comma. Unlike CSV files, every row is treated as data — no header is
-/// skipped — so the first pasted line is not silently dropped.
-pub fn parse_cards(text: &str) -> (Vec<Flashcard>, Vec<FlashcardWarning>) {
+/// Parse pasted text into a [`CsvTable`], auto-detecting the delimiter (tab if
+/// any line contains one, else comma).
+pub fn parse_pasted_table(text: &str, has_headers: bool) -> (CsvTable, Vec<FlashcardWarning>) {
     let delimiter = if text.lines().any(|line| line.contains('\t')) {
         b'\t'
     } else {
         b','
     };
-    parse_records(text, delimiter, false)
+    parse_table(text, delimiter, has_headers)
 }
 
-/// Shared CSV/TSV parsing used by both file loading and pasted-text input.
-fn parse_records(
+/// Parse delimited text into a [`CsvTable`]. Shared by file loading and pasted
+/// input. Rows are kept as-is (ragged allowed); only a wholly empty source
+/// warns.
+pub fn parse_table(
     text: &str,
     delimiter: u8,
     has_headers: bool,
-) -> (Vec<Flashcard>, Vec<FlashcardWarning>) {
+) -> (CsvTable, Vec<FlashcardWarning>) {
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(has_headers)
         .flexible(true)
         .from_reader(text.as_bytes());
 
-    let mut cards = Vec::new();
-    let mut warnings = Vec::new();
-    // Row numbers are 1-indexed for humans; offset by an extra row when a
-    // header was consumed so reported numbers line up with the source file.
-    let row_offset = if has_headers { 2 } else { 1 };
+    // Header values name the columns when present (owned now, before the
+    // mutable `records()` borrow below).
+    let mut columns: Vec<String> = if has_headers {
+        reader
+            .headers()
+            .map(|h| h.iter().map(str::to_string).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
-    for (i, result) in reader.records().enumerate() {
-        let record = match result {
-            Ok(record) => record,
-            Err(e) => {
-                log::warn!("Skipping unreadable row: {e}");
-                continue;
-            }
-        };
-        let row_number = i + row_offset;
-        if record.len() >= 2 {
-            cards.push(Flashcard {
-                front: record[0].to_string(),
-                back: record[1].to_string(),
-            });
-        } else {
-            log::warn!(
-                "Row {}: skipping (has {} column(s), need >= 2)",
-                row_number,
-                record.len()
-            );
-            warnings.push(FlashcardWarning::CsvRowSkipped {
-                row_number,
-                column_count: record.len(),
-            });
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for result in reader.records() {
+        match result {
+            Ok(record) => rows.push(record.iter().map(str::to_string).collect()),
+            Err(e) => log::warn!("Skipping unreadable row: {e}"),
         }
     }
 
-    if cards.is_empty() {
+    // Expose a column for every cell the source has: the header width and the
+    // widest data row. Unnamed columns become `Col1`..`ColN` (1-based).
+    let width = columns
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    for i in columns.len()..width {
+        columns.push(format!("Col{}", i + 1));
+    }
+
+    let mut warnings = Vec::new();
+    if rows.is_empty() {
         warnings.push(FlashcardWarning::EmptyCsv);
     }
 
-    (cards, warnings)
+    (CsvTable { columns, rows }, warnings)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::table::ColumnRole;
 
     #[test]
-    fn parses_comma_separated_paste() {
-        let (cards, _) = parse_cards("hello,world\nfoo,bar");
-        assert_eq!(cards.len(), 2);
+    fn header_row_names_columns() {
+        let (table, _) = parse_table("word,meaning\nchien,dog\nchat,cat", b',', true);
+        assert_eq!(table.columns, vec!["word", "meaning"]);
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0], vec!["chien", "dog"]);
+    }
+
+    #[test]
+    fn no_header_falls_back_to_col_names_1_based() {
+        let (table, _) = parse_table("chien,dog\nchat,cat", b',', false);
+        assert_eq!(table.columns, vec!["Col1", "Col2"]);
+        assert_eq!(table.rows.len(), 2); // first row is data, not a header
+        assert_eq!(table.rows[0], vec!["chien", "dog"]);
+    }
+
+    #[test]
+    fn ragged_rows_expose_every_column() {
+        let (table, _) = parse_table("a,b\nx,y,z", b',', true);
+        // The widest row (3 cells) adds a third, auto-named column.
+        assert_eq!(table.columns, vec!["a", "b", "Col3"]);
+        assert_eq!(table.rows[0], vec!["x", "y", "z"]);
+    }
+
+    #[test]
+    fn pasted_text_autodetects_tab_and_keeps_first_row() {
+        let (table, _) = parse_pasted_table("hello\tworld\nfoo\tbar", false);
+        assert_eq!(table.columns, vec!["Col1", "Col2"]);
+        assert_eq!(table.rows.len(), 2);
+        let cards = table.to_cards(&table.default_roles(), "\n");
         assert_eq!(cards[0].front, "hello");
         assert_eq!(cards[0].back, "world");
-        assert_eq!(cards[1].back, "bar");
     }
 
     #[test]
-    fn parses_tab_separated_paste() {
-        let (cards, _) = parse_cards("hello\tworld\nfoo\tbar");
-        assert_eq!(cards.len(), 2);
-        assert_eq!(cards[0].back, "world");
-    }
-
-    #[test]
-    fn paste_keeps_first_row() {
-        // No header is skipped for pasted text.
-        let (cards, _) = parse_cards("first,card\nsecond,card");
-        assert_eq!(cards.len(), 2);
-        assert_eq!(cards[0].front, "first");
-    }
-
-    #[test]
-    fn paste_handles_quoted_commas() {
-        let (cards, _) = parse_cards("\"a, b\",\"c, d\"");
-        assert_eq!(cards.len(), 1);
-        assert_eq!(cards[0].front, "a, b");
-        assert_eq!(cards[0].back, "c, d");
+    fn quoted_commas_are_one_cell() {
+        let (table, _) = parse_table("\"a, b\",\"c, d\"", b',', false);
+        assert_eq!(table.rows[0], vec!["a, b", "c, d"]);
     }
 
     #[test]
     fn empty_input_warns() {
-        let (cards, warnings) = parse_cards("");
-        assert!(cards.is_empty());
+        let (table, warnings) = parse_table("", b',', true);
+        assert!(table.rows.is_empty());
         assert!(
             warnings
                 .iter()
@@ -136,15 +146,12 @@ mod tests {
     }
 
     #[test]
-    fn single_column_row_is_skipped() {
-        let (cards, warnings) = parse_cards("lonely");
-        assert!(cards.is_empty());
-        assert!(warnings.iter().any(|w| matches!(
-            w,
-            FlashcardWarning::CsvRowSkipped {
-                column_count: 1,
-                ..
-            }
-        )));
+    fn default_role_projection_matches_legacy_first_two_columns() {
+        let (table, _) = parse_table("front,back,note\nq,a,ignored", b',', true);
+        let cards = table.to_cards(&table.default_roles(), "\n");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].front, "q");
+        assert_eq!(cards[0].back, "a");
+        assert_eq!(table.default_roles()[2], ColumnRole::Ignore);
     }
 }

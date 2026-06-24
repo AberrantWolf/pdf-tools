@@ -200,6 +200,7 @@ impl PrintJunkApp {
         if !self.flashcard_state.csv_path.is_empty() {
             let _ = self.command_tx.send(PdfCommand::FlashcardsLoadCsv {
                 input_path: PathBuf::from(self.flashcard_state.csv_path.clone()),
+                has_headers: self.flashcard_state.csv_has_headers,
             });
         }
 
@@ -332,9 +333,11 @@ impl eframe::App for PrintJunkApp {
                 Mode::Flashcards if ext == "csv" => {
                     log::info!("Loading CSV: {}", path.display());
                     self.flashcard_state.csv_path = path.display().to_string();
-                    let _ = self
-                        .command_tx
-                        .send(PdfCommand::FlashcardsLoadCsv { input_path: path });
+                    self.flashcard_state.csv_has_headers = true;
+                    let _ = self.command_tx.send(PdfCommand::FlashcardsLoadCsv {
+                        input_path: path,
+                        has_headers: true,
+                    });
                 }
                 Mode::Flashcards if ext == "json" => {
                     log::info!("Loading flashcard layout/deck: {}", path.display());
@@ -386,10 +389,12 @@ impl eframe::App for PrintJunkApp {
                             .pick_file()
                         {
                             self.flashcard_state.csv_path = path.display().to_string();
+                            self.flashcard_state.csv_has_headers = true;
                             log::info!("Loading CSV: {}", path.display());
-                            let _ = self
-                                .command_tx
-                                .send(PdfCommand::FlashcardsLoadCsv { input_path: path });
+                            let _ = self.command_tx.send(PdfCommand::FlashcardsLoadCsv {
+                                input_path: path,
+                                has_headers: true,
+                            });
                         }
                     }
                     Mode::Typesetting => self.typesetting_state.open_file_dialog(),
@@ -418,12 +423,14 @@ impl eframe::App for PrintJunkApp {
                         total,
                     });
                 }
-                PdfUpdate::FlashcardsLoaded { cards, warnings } => {
-                    log::info!("Loaded {} flashcards from CSV", cards.len());
+                PdfUpdate::FlashcardsTableLoaded { table, warnings } => {
+                    log::info!(
+                        "Loaded {} row(s), {} column(s) from CSV",
+                        table.rows.len(),
+                        table.columns.len()
+                    );
                     self.progress = None;
-                    self.flashcard_state.cards = cards;
-                    self.flashcard_state.load_warnings = warnings;
-                    self.flashcard_state.needs_regeneration = true;
+                    self.flashcard_state.set_table(table, warnings);
                 }
                 PdfUpdate::FlashcardsComplete { path, card_count } => {
                     log::info!("Generated {} flashcards → {}", card_count, path.display());
@@ -439,6 +446,8 @@ impl eframe::App for PrintJunkApp {
                     if let Some(cards) = cards {
                         log::info!("Loaded deck with {} cards", cards.len());
                         self.flashcard_state.cards = cards;
+                        // A deck supplies finished cards — no source table to map.
+                        self.flashcard_state.csv_table = None;
                         self.flashcard_state.csv_path.clear();
                         self.flashcard_state.paste_text.clear();
                         self.flashcard_state.load_warnings.clear();

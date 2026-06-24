@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 // Re-export types from library crates
-pub use pdf_flashcards::{Flashcard, FlashcardOptions, FlashcardWarning};
+pub use pdf_flashcards::{ColumnRole, CsvTable, Flashcard, FlashcardOptions, FlashcardWarning};
 #[cfg(not(target_arch = "wasm32"))]
 pub use pdf_import::{ArchiveStatus, AssetReport};
 pub use pdf_impose::{ImpositionOptions, ImpositionStatistics};
@@ -30,6 +30,8 @@ pub type SectionOverrides = std::collections::HashMap<String, SectionOverride>;
 pub enum PdfCommand {
     FlashcardsLoadCsv {
         input_path: PathBuf,
+        /// Whether the first row names the columns (vs. being data).
+        has_headers: bool,
     },
     FlashcardsGenerate {
         cards: Vec<Flashcard>,
@@ -158,8 +160,10 @@ pub enum PdfUpdate {
         current: usize,
         total: usize,
     },
-    FlashcardsLoaded {
-        cards: Vec<Flashcard>,
+    /// A CSV/paste was parsed into a column table; the UI maps columns to card
+    /// sides (see [`CsvTable::to_cards`]).
+    FlashcardsTableLoaded {
+        table: CsvTable,
         warnings: Vec<FlashcardWarning>,
     },
     FlashcardsComplete {
