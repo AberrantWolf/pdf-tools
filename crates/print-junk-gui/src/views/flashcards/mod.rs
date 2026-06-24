@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 
 use super::ViewerState;
 use crate::ui_components::{
-    MarginsEditor, SliderBuilder, SpacingEditor, enum_selector, paper_size_picker,
+    STANDARD_PAPER_SIZES, enum_combo, form, form_row, form_row_enabled, form_row_info, num_field,
+    section, section_heading,
 };
 
 mod flashcard_layout;
@@ -199,44 +200,36 @@ pub fn show_flashcards(
         .min_size(300.0)
         .show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Flashcard Settings");
-                ui.separator();
+                ui.heading("Flashcards");
+                ui.add_space(2.0);
 
-                egui::CollapsingHeader::new("🃏 Input")
-                    .default_open(true)
-                    .show(ui, |ui| show_input_section(ui, state, command_tx));
-
-                egui::CollapsingHeader::new("📄 Page & Layout")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        show_paper_section(ui, state);
-                        ui.add_space(8.0);
-                        ui.separator();
-                        show_margins_section(ui, state);
-                        ui.add_space(8.0);
-                        ui.separator();
-                        show_sizing_section(ui, state);
-                        ui.add_space(8.0);
-                        ui.separator();
-                        show_spacing_section(ui, state);
-                    });
-
-                egui::CollapsingHeader::new("🔤 Text")
-                    .default_open(false)
-                    .show(ui, |ui| show_font_section(ui, state));
-
-                egui::CollapsingHeader::new("🔁 Two-sided")
-                    .default_open(false)
-                    .show(ui, |ui| show_duplex_section(ui, state));
-
-                egui::CollapsingHeader::new("📊 Summary")
-                    .default_open(true)
-                    .show(ui, |ui| show_summary_section(ui, state));
-
+                section(ui, "fc_input_sec", "Input", true, |ui| {
+                    show_input_section(ui, state, command_tx);
+                });
+                section(ui, "fc_page_sec", "Page", true, |ui| {
+                    show_paper_section(ui, state);
+                });
+                section(ui, "fc_margins_sec", "Margins", true, |ui| {
+                    show_margins_section(ui, state);
+                });
+                section(ui, "fc_layout_sec", "Layout", true, |ui| {
+                    show_sizing_section(ui, state);
+                });
+                section(ui, "fc_spacing_sec", "Spacing", false, |ui| {
+                    show_spacing_section(ui, state);
+                });
+                section(ui, "fc_text_sec", "Text", false, |ui| {
+                    show_font_section(ui, state);
+                });
+                section(ui, "fc_duplex_sec", "Two-sided", false, |ui| {
+                    show_duplex_section(ui, state);
+                });
+                section(ui, "fc_summary_sec", "Summary", true, |ui| {
+                    show_summary_section(ui, state);
+                });
                 show_cards_peek(ui, state);
 
-                ui.add_space(8.0);
-                ui.separator();
+                section_heading(ui, "Output");
                 show_actions_section(ui, state, command_tx);
             });
         });
@@ -314,165 +307,140 @@ fn show_load_warnings(ui: &mut egui::Ui, warnings: &[FlashcardWarning]) {
 }
 
 fn show_paper_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
-    if paper_size_picker(ui, "paper_size", "Paper Type:", &mut state.paper_size) {
-        state.needs_regeneration = true;
-    }
-
-    ui.add_space(10.0);
-
     let measurement_systems = [
         (MeasurementSystem::Inches, "Inches (in)"),
         (MeasurementSystem::Millimeters, "Millimeters (mm)"),
         (MeasurementSystem::Points, "Points (pt)"),
     ];
-
     let old_system = state.measurement_system;
-    enum_selector(
-        ui,
-        "measurement_system",
-        "Measurement System:",
-        &mut state.measurement_system,
-        &measurement_systems,
-    );
-
+    let mut changed = false;
+    form(ui, "fc_page", |ui| {
+        changed |= form_row(ui, "Paper", |ui| {
+            enum_combo(ui, "fc_paper", &mut state.paper_size, &STANDARD_PAPER_SIZES)
+        });
+        form_row(ui, "Units", |ui| {
+            enum_combo(
+                ui,
+                "fc_units",
+                &mut state.measurement_system,
+                &measurement_systems,
+            )
+        });
+    });
+    // Switching units only re-expresses the same physical sizes — no regenerate.
     if old_system != state.measurement_system {
         state.convert_all_values(old_system);
+    }
+    if changed {
+        state.needs_regeneration = true;
     }
 }
 
 fn show_margins_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
-    ui.label("Page Margins:");
     let max = get_max_value(MaxValueType::Margin, state.measurement_system);
-    let unit = state.measurement_system.name();
-
-    if MarginsEditor::new(
-        &mut state.margin_top,
-        &mut state.margin_bottom,
-        &mut state.margin_left,
-        &mut state.margin_right,
-        max,
-        unit,
-    )
-    .show(ui)
-    {
+    let unit = format!(" {}", state.measurement_system.name());
+    let mut changed = false;
+    form(ui, "fc_margins", |ui| {
+        changed |= form_row(ui, "Top", |ui| {
+            num_field(ui, &mut state.margin_top, 0.0..=max, &unit)
+        });
+        changed |= form_row(ui, "Bottom", |ui| {
+            num_field(ui, &mut state.margin_bottom, 0.0..=max, &unit)
+        });
+        changed |= form_row(ui, "Left", |ui| {
+            num_field(ui, &mut state.margin_left, 0.0..=max, &unit)
+        });
+        changed |= form_row(ui, "Right", |ui| {
+            num_field(ui, &mut state.margin_right, 0.0..=max, &unit)
+        });
+    });
+    if changed {
         state.needs_regeneration = true;
     }
 }
 
 fn show_sizing_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
-    ui.label("Sizing Mode:");
-    egui::ComboBox::from_id_salt("sizing_mode")
-        .selected_text(match state.sizing_mode {
-            SizingMode::Grid => "Specify Grid (rows/columns)",
-            SizingMode::CardSize => "Specify Card Size",
-        })
-        .show_ui(ui, |ui| {
-            if ui
-                .selectable_value(
-                    &mut state.sizing_mode,
-                    SizingMode::Grid,
-                    "Specify Grid (rows/columns)",
-                )
-                .on_hover_text("Set rows and columns; card size is computed to fit.")
-                .changed()
-            {
-                state.recalculate_card_size_from_grid();
-                state.needs_regeneration = true;
-            }
-            if ui
-                .selectable_value(
-                    &mut state.sizing_mode,
-                    SizingMode::CardSize,
-                    "Specify Card Size",
-                )
-                .on_hover_text("Set the card size; the grid is computed to fit the page.")
-                .changed()
-            {
-                state.recalculate_grid_from_card_size();
-                state.needs_regeneration = true;
-            }
+    let sizing_modes = [
+        (SizingMode::Grid, "Grid (rows × columns)"),
+        (SizingMode::CardSize, "Card size"),
+    ];
+    let max = get_max_value(MaxValueType::CardSize, state.measurement_system);
+    let unit = format!(" {}", state.measurement_system.name());
+    let grid_mode = state.sizing_mode == SizingMode::Grid;
+
+    let mut mode_changed = false;
+    let mut grid_changed = false;
+    let mut card_changed = false;
+    form(ui, "fc_layout", |ui| {
+        mode_changed |= form_row_info(
+            ui,
+            "Sizing",
+            "Pick which to fix; the other is computed to fill the page. \
+             Standard index cards are 2.5 × 3.5 in (poker size).",
+            |ui| enum_combo(ui, "fc_sizing", &mut state.sizing_mode, &sizing_modes),
+        );
+        grid_changed |= form_row_enabled(ui, "Rows", grid_mode, |ui| {
+            num_field(ui, &mut state.rows, 1..=10, "")
         });
-
-    ui.add_space(10.0);
-    ui.separator();
-
-    // Grid Layout
-    ui.label("Grid Layout:");
-    ui.add_enabled_ui(state.sizing_mode == SizingMode::Grid, |ui| {
-        let mut changed = false;
-        changed |= SliderBuilder::new(&mut state.rows, 1..=10)
-            .text("Rows")
-            .show(ui);
-        changed |= SliderBuilder::new(&mut state.columns, 1..=10)
-            .text("Columns")
-            .show(ui);
-
-        if changed {
-            state.recalculate_card_size_from_grid();
-            state.needs_regeneration = true;
-        }
+        grid_changed |= form_row_enabled(ui, "Columns", grid_mode, |ui| {
+            num_field(ui, &mut state.columns, 1..=10, "")
+        });
+        card_changed |= form_row_enabled(ui, "Width", !grid_mode, |ui| {
+            num_field(ui, &mut state.card_width, 0.0..=max, &unit)
+        });
+        card_changed |= form_row_enabled(ui, "Height", !grid_mode, |ui| {
+            num_field(ui, &mut state.card_height, 0.0..=max, &unit)
+        });
     });
 
-    ui.add_space(10.0);
-    ui.separator();
-
-    // Card Size
-    ui.label("Card Size:")
-        .on_hover_text("Standard index cards are 2.5 × 3.5 in (poker size).");
-    ui.add_enabled_ui(state.sizing_mode == SizingMode::CardSize, |ui| {
-        let max = get_max_value(MaxValueType::CardSize, state.measurement_system);
-        let unit = state.measurement_system.name();
-        let mut changed = false;
-
-        changed |= SliderBuilder::new(&mut state.card_width, 0.0..=max)
-            .text(format!("Width ({unit})"))
-            .show(ui);
-
-        changed |= SliderBuilder::new(&mut state.card_height, 0.0..=max)
-            .text(format!("Height ({unit})"))
-            .show(ui);
-
-        if changed {
-            state.recalculate_grid_from_card_size();
-            state.needs_regeneration = true;
+    // The fixed dimension drives the computed one; recompute on any change.
+    if mode_changed {
+        match state.sizing_mode {
+            SizingMode::Grid => state.recalculate_card_size_from_grid(),
+            SizingMode::CardSize => state.recalculate_grid_from_card_size(),
         }
-    });
+        state.needs_regeneration = true;
+    }
+    if grid_changed {
+        state.recalculate_card_size_from_grid();
+        state.needs_regeneration = true;
+    }
+    if card_changed {
+        state.recalculate_grid_from_card_size();
+        state.needs_regeneration = true;
+    }
 }
 
 fn show_spacing_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
-    ui.label("Spacing:");
     let max = get_max_value(MaxValueType::Spacing, state.measurement_system);
-    let unit = state.measurement_system.name();
-
-    if SpacingEditor::new(
-        &mut state.column_spacing,
-        &mut state.row_spacing,
-        "Column Spacing",
-        "Row Spacing",
-        max,
-        unit,
-    )
-    .show(ui)
-    {
+    let unit = format!(" {}", state.measurement_system.name());
+    let mut changed = false;
+    form(ui, "fc_spacing", |ui| {
+        changed |= form_row(ui, "Column gap", |ui| {
+            num_field(ui, &mut state.column_spacing, 0.0..=max, &unit)
+        });
+        changed |= form_row(ui, "Row gap", |ui| {
+            num_field(ui, &mut state.row_spacing, 0.0..=max, &unit)
+        });
+    });
+    if changed {
         state.needs_regeneration = true;
     }
 }
 
 fn show_font_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
-    ui.label("Font Size:");
-    if SliderBuilder::new(&mut state.font_size_pt, 6.0..=36.0)
-        .text("Size (pt)")
-        .show(ui)
-    {
+    let mut changed = false;
+    form(ui, "fc_font", |ui| {
+        changed |= form_row(ui, "Font size", |ui| {
+            num_field(ui, &mut state.font_size_pt, 6.0..=36.0, " pt")
+        });
+    });
+    if changed {
         state.needs_regeneration = true;
     }
 }
 
 fn show_duplex_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
-    ui.label("Two-sided printing:").on_hover_text(
-        "Match your printer's two-sided setting so card backs line up behind their fronts.",
-    );
-
     let mut changed = false;
     ui.horizontal(|ui| {
         changed |= ui
@@ -490,8 +458,8 @@ fn show_duplex_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
     });
 
     let hint = match state.duplex {
-        Duplex::LongEdge => "Backs mirror left ↔ right.",
-        Duplex::ShortEdge => "Backs mirror top ↔ bottom.",
+        Duplex::LongEdge => "Backs mirror left ↔ right — match your printer's long-edge binding.",
+        Duplex::ShortEdge => "Backs mirror top ↔ bottom — match your printer's short-edge binding.",
         Duplex::OneSided => "Only the fronts are printed.",
     };
     ui.label(egui::RichText::new(hint).small().weak());
@@ -534,20 +502,19 @@ fn show_cards_peek(ui: &mut egui::Ui, state: &FlashcardState) {
     if state.cards.is_empty() {
         return;
     }
-    egui::CollapsingHeader::new(format!("Cards ({})", state.cards.len()))
-        .default_open(false)
-        .show(ui, |ui| {
-            for card in state.cards.iter().take(10) {
-                ui.label(format!("{}  →  {}", card.front, card.back));
-            }
-            if state.cards.len() > 10 {
-                ui.label(
-                    egui::RichText::new(format!("… and {} more", state.cards.len() - 10))
-                        .small()
-                        .weak(),
-                );
-            }
-        });
+    let title = format!("Cards ({})", state.cards.len());
+    section(ui, "fc_cards_peek", &title, false, |ui| {
+        for card in state.cards.iter().take(10) {
+            ui.label(format!("{}  →  {}", card.front, card.back));
+        }
+        if state.cards.len() > 10 {
+            ui.label(
+                egui::RichText::new(format!("… and {} more", state.cards.len() - 10))
+                    .small()
+                    .weak(),
+            );
+        }
+    });
 }
 
 fn show_actions_section(

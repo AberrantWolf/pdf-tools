@@ -95,6 +95,22 @@ pub fn form_row_info<R>(
     result
 }
 
+/// Like [`form_row`], but dims the whole row (label + control) when `enabled` is
+/// false — for inputs computed from another mode that shouldn't be edited there.
+pub fn form_row_enabled<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    enabled: bool,
+    add_control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.add_enabled(enabled, egui::Label::new(label));
+    });
+    let result = ui.add_enabled_ui(enabled, add_control).inner;
+    ui.end_row();
+    result
+}
+
 /// A small "i in a circle" info marker, painted (not a glyph, so it renders in
 /// any font) and revealing `tooltip` on hover.
 fn info_icon(ui: &mut egui::Ui, tooltip: &str) {
@@ -173,54 +189,6 @@ where
             }
         });
     changed
-}
-
-/// Builder for creating sliders with automatic change tracking
-pub struct SliderBuilder<'a, T> {
-    value: &'a mut T,
-    range: std::ops::RangeInclusive<T>,
-    text: String,
-    suffix: Option<String>,
-}
-
-impl<'a, T> SliderBuilder<'a, T>
-where
-    T: egui::emath::Numeric,
-{
-    pub fn new(value: &'a mut T, range: std::ops::RangeInclusive<T>) -> Self {
-        Self {
-            value,
-            range,
-            text: String::new(),
-            suffix: None,
-        }
-    }
-
-    pub fn text(mut self, text: impl Into<String>) -> Self {
-        self.text = text.into();
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
-        self.suffix = Some(suffix.into());
-        self
-    }
-
-    pub fn show(self, ui: &mut egui::Ui) -> bool {
-        let mut slider =
-            egui::Slider::new(self.value, self.range).clamping(egui::SliderClamping::Never);
-
-        if !self.text.is_empty() {
-            slider = slider.text(self.text);
-        }
-
-        if let Some(suffix) = self.suffix {
-            slider = slider.suffix(suffix);
-        }
-
-        ui.add(slider).changed()
-    }
 }
 
 /// Builder for creating drag values with automatic formatting
@@ -472,58 +440,6 @@ impl<'a> FileListEditor<'a> {
     }
 }
 
-/// Margin editor component (4-sided margins)
-pub struct MarginsEditor<'a> {
-    top: &'a mut f32,
-    bottom: &'a mut f32,
-    left: &'a mut f32,
-    right: &'a mut f32,
-    max: f32,
-    unit: &'a str,
-}
-
-impl<'a> MarginsEditor<'a> {
-    pub fn new(
-        top: &'a mut f32,
-        bottom: &'a mut f32,
-        left: &'a mut f32,
-        right: &'a mut f32,
-        max: f32,
-        unit: &'a str,
-    ) -> Self {
-        Self {
-            top,
-            bottom,
-            left,
-            right,
-            max,
-            unit,
-        }
-    }
-
-    pub fn show(self, ui: &mut egui::Ui) -> bool {
-        let mut changed = false;
-
-        changed |= SliderBuilder::new(self.top, 0.0..=self.max)
-            .text(format!("Top ({})", self.unit))
-            .show(ui);
-
-        changed |= SliderBuilder::new(self.bottom, 0.0..=self.max)
-            .text(format!("Bottom ({})", self.unit))
-            .show(ui);
-
-        changed |= SliderBuilder::new(self.left, 0.0..=self.max)
-            .text(format!("Left ({})", self.unit))
-            .show(ui);
-
-        changed |= SliderBuilder::new(self.right, 0.0..=self.max)
-            .text(format!("Right ({})", self.unit))
-            .show(ui);
-
-        changed
-    }
-}
-
 /// Sheet margins editor (printer-safe area - uniform sides)
 pub struct SheetMarginsEditor<'a> {
     top: &'a mut f32,
@@ -634,50 +550,6 @@ impl<'a> LeafMarginsEditor<'a> {
             " mm",
             "Extra material around fold edges, trimmed away after binding (3mm standard)",
         );
-
-        changed
-    }
-}
-
-/// Two-dimensional spacing editor
-pub struct SpacingEditor<'a> {
-    horizontal: &'a mut f32,
-    vertical: &'a mut f32,
-    h_label: &'a str,
-    v_label: &'a str,
-    max: f32,
-    unit: &'a str,
-}
-
-impl<'a> SpacingEditor<'a> {
-    pub fn new(
-        horizontal: &'a mut f32,
-        vertical: &'a mut f32,
-        h_label: &'a str,
-        v_label: &'a str,
-        max: f32,
-        unit: &'a str,
-    ) -> Self {
-        Self {
-            horizontal,
-            vertical,
-            h_label,
-            v_label,
-            max,
-            unit,
-        }
-    }
-
-    pub fn show(self, ui: &mut egui::Ui) -> bool {
-        let mut changed = false;
-
-        changed |= SliderBuilder::new(self.vertical, 0.0..=self.max)
-            .text(format!("{} ({})", self.v_label, self.unit))
-            .show(ui);
-
-        changed |= SliderBuilder::new(self.horizontal, 0.0..=self.max)
-            .text(format!("{} ({})", self.h_label, self.unit))
-            .show(ui);
 
         changed
     }
