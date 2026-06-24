@@ -19,6 +19,11 @@ const STARTUP_KEY: &str = "print_junk_startup";
 #[cfg(not(target_arch = "wasm32"))]
 const PROJECT_KEY: &str = "print_junk_project";
 
+/// eframe storage key for the path of the `.pjproj` file this session is editing
+/// (so Cmd+S re-saves it and the save dialog defaults to its name).
+#[cfg(not(target_arch = "wasm32"))]
+const CURRENT_PROJECT_KEY: &str = "print_junk_current_project";
+
 #[derive(Clone)]
 struct ProgressState {
     operation: String,
@@ -50,6 +55,12 @@ pub struct PrintJunkApp {
     impose_state: ImposeState,
     #[cfg(not(target_arch = "wasm32"))]
     typesetting_state: TypesettingState,
+
+    // Path of the `.pjproj` file currently being edited, if any. Drives Cmd+S
+    // (re-save in place) and the save dialog's default name; persisted so the
+    // project identity survives a relaunch.
+    #[cfg(not(target_arch = "wasm32"))]
+    current_project_path: Option<PathBuf>,
 
     // Runtime handle (native only)
     #[cfg(not(target_arch = "wasm32"))]
@@ -87,6 +98,10 @@ impl PrintJunkApp {
             .and_then(|s| eframe::get_value::<StartupSettings>(s, STARTUP_KEY))
             .unwrap_or_default();
 
+        let current_project_path = cc
+            .storage
+            .and_then(|s| eframe::get_value::<PathBuf>(s, CURRENT_PROJECT_KEY));
+
         let mut app = Self {
             mode: startup.initial_mode(),
             show_startup: startup.should_show_on_launch(),
@@ -100,6 +115,7 @@ impl PrintJunkApp {
             viewer_state: None,
             impose_state: ImposeState::default(),
             typesetting_state: TypesettingState::default(),
+            current_project_path,
             _tokio_handle: tokio_handle,
         };
         // Restore the last session's settings and re-load any referenced files.
@@ -218,21 +234,47 @@ impl PrintJunkApp {
         }
     }
 
-    /// Prompt for a path and save the current project to a `.pjproj` file.
+    /// Save the project: re-save the file this session is editing if there is
+    /// one, otherwise prompt for a path. Bound to Cmd+S.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_project(&mut self) {
+        match self.current_project_path.clone() {
+            Some(path) => self.write_project(path),
+            None => self.save_project_dialog(),
+        }
+    }
+
+    /// Prompt for a path and save the project. The dialog defaults to the
+    /// current project's name so re-saving keeps it.
     #[cfg(not(target_arch = "wasm32"))]
     fn save_project_dialog(&mut self) {
+        let default_name = self
+            .current_project_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or_else(
+                || "project.pjproj".to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Print Junk Project", &[crate::project::PROJECT_EXTENSION])
-            .set_file_name("project.pjproj")
+            .set_file_name(default_name)
             .save_file()
         {
-            match crate::project::write_file(&path, &self.project_ref()) {
-                Ok(()) => {
-                    log::info!("Saved project to {}", path.display());
-                    self.startup.push_recent_project(path);
-                }
-                Err(e) => log::error!("Failed to save project: {e}"),
+            self.write_project(path);
+        }
+    }
+
+    /// Write the project to `path` and adopt it as the current project.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_project(&mut self, path: PathBuf) {
+        match crate::project::write_file(&path, &self.project_ref()) {
+            Ok(()) => {
+                log::info!("Saved project to {}", path.display());
+                self.current_project_path = Some(path.clone());
+                self.startup.push_recent_project(path);
             }
+            Err(e) => log::error!("Failed to save project: {e}"),
         }
     }
 
@@ -253,6 +295,7 @@ impl PrintJunkApp {
         match crate::project::read_file(&path) {
             Ok(project) => {
                 self.apply_project(project);
+                self.current_project_path = Some(path.clone());
                 self.startup.push_recent_project(path);
                 log::info!("Project loaded");
             }
@@ -353,38 +396,11 @@ impl eframe::App for PrintJunkApp {
                 }
             }
 
+            // Cmd+S saves the project (PDF export lives on each mode's
+            // "Save PDF…" button). Saves in place when a project file is open,
+            // otherwise prompts.
             if cmd_s {
-                match self.mode {
-                    Mode::Impose if !self.impose_state.options.input_files.is_empty() => {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("PDF", &["pdf"])
-                            .set_file_name("imposed.pdf")
-                            .save_file()
-                        {
-                            log::info!("Saving imposed PDF to: {}", path.display());
-                            let _ = self.command_tx.send(PdfCommand::ImposeGenerate {
-                                options: self.impose_state.options.clone(),
-                                output_path: path,
-                            });
-                        }
-                    }
-                    Mode::Flashcards if !self.flashcard_state.cards.is_empty() => {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("PDF", &["pdf"])
-                            .set_file_name("flashcards.pdf")
-                            .save_file()
-                        {
-                            log::info!("Saving flashcards to: {}", path.display());
-                            let options = self.flashcard_state.to_options();
-                            let _ = self.command_tx.send(PdfCommand::FlashcardsGenerate {
-                                cards: self.flashcard_state.cards.clone(),
-                                options,
-                                output_path: path,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
+                self.save_project();
             }
         }
 
@@ -915,5 +931,10 @@ impl eframe::App for PrintJunkApp {
         // Auto-persist all modes' settings (and file paths, not contents).
         #[cfg(not(target_arch = "wasm32"))]
         eframe::set_value(storage, PROJECT_KEY, &self.project_ref());
+        // Remember which `.pjproj` is being edited so Cmd+S re-saves it.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = &self.current_project_path {
+            eframe::set_value(storage, CURRENT_PROJECT_KEY, path);
+        }
     }
 }
