@@ -248,9 +248,112 @@ fn back_cell_origin(options: &FlashcardOptions, front_x: f32, front_y: f32) -> (
     }
 }
 
-/// Append PDF text operators that draw `text` horizontally centred in the card
-/// cell whose bottom-left corner is `(cell_x, cell_y)` (mm), vertically centred
-/// for the given font size.
+// --- Card text layout ------------------------------------------------------
+// A card side is the columns assigned to it, joined with newlines. The first
+// field is the headword, drawn at the full font size; any further fields are
+// detail lines, drawn smaller, wrapped, and clipped to a few lines. The whole
+// block is then shrunk if needed so it fits inside the card.
+
+/// Detail fields render at this fraction of the headword's size.
+const SECONDARY_SCALE: f32 = 0.6;
+/// A detail field wraps to at most this many lines; extras are dropped.
+const MAX_SECONDARY_LINES: usize = 3;
+/// Line advance as a multiple of the font size (covers ascent + descent + gap).
+const LINE_SPACING: f32 = 1.2;
+/// Never shrink the headword below this, even if it still overflows.
+const MIN_FONT_PT: f32 = 5.0;
+/// Inset from the card edges, each side (mm).
+const CARD_PADDING_MM: f32 = 2.0;
+
+/// A laid-out line: its text and the font size it's drawn at.
+struct LaidLine {
+    text: String,
+    size_pt: f32,
+}
+
+/// Greedy word-wrap `text` to `max_width_mm` at `size_pt`. A single word wider
+/// than the limit becomes its own (overflowing) line — the caller's shrink pass
+/// brings it back in. Returns no lines for blank input.
+fn wrap_field(
+    text: &str,
+    face: &ttf_parser::Face<'_>,
+    size_pt: f32,
+    max_width_mm: f32,
+) -> Vec<String> {
+    let max_width_pt = mm_to_pt(max_width_mm);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if current.is_empty() || measure_text_width(&candidate, face, size_pt) <= max_width_pt {
+            current = candidate;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+/// Lay out a card side into fitted lines: headword at full size, detail fields
+/// smaller/wrapped/clipped, the whole block scaled down until it fits the card.
+fn layout_side(
+    text: &str,
+    face: &ttf_parser::Face<'_>,
+    base_size_pt: f32,
+    card_width_mm: f32,
+    card_height_mm: f32,
+) -> Vec<LaidLine> {
+    let max_width = (card_width_mm - 2.0 * CARD_PADDING_MM).max(1.0);
+    let max_height = (card_height_mm - 2.0 * CARD_PADDING_MM).max(1.0);
+    let fields: Vec<&str> = text.split('\n').collect();
+
+    let mut scale = 1.0_f32;
+    loop {
+        let mut lines: Vec<LaidLine> = Vec::new();
+        for (i, field) in fields.iter().enumerate() {
+            if field.trim().is_empty() {
+                continue;
+            }
+            let size = if i == 0 {
+                base_size_pt * scale
+            } else {
+                base_size_pt * SECONDARY_SCALE * scale
+            };
+            let mut wrapped = wrap_field(field, face, size, max_width);
+            if i > 0 {
+                wrapped.truncate(MAX_SECONDARY_LINES);
+            }
+            lines.extend(wrapped.into_iter().map(|text| LaidLine {
+                text,
+                size_pt: size,
+            }));
+        }
+
+        let total_height: f32 = lines
+            .iter()
+            .map(|l| pt_to_mm(l.size_pt * LINE_SPACING))
+            .sum();
+        let fits_width = lines
+            .iter()
+            .all(|l| pt_to_mm(measure_text_width(&l.text, face, l.size_pt)) <= max_width);
+
+        if (total_height <= max_height && fits_width) || base_size_pt * scale <= MIN_FONT_PT {
+            return lines;
+        }
+        scale *= 0.92;
+    }
+}
+
+/// Append PDF text operators that draw `text` as a multi-line block, centred in
+/// the card cell whose bottom-left corner is `(cell_x, cell_y)` (mm).
 fn draw_card_text(
     ops: &mut String,
     text: &str,
@@ -259,18 +362,41 @@ fn draw_card_text(
     cell_x: f32,
     cell_y: f32,
 ) {
-    let center_x = cell_x + options.card_width_mm / 2.0;
-    let baseline_y = cell_y + (options.card_height_mm - options.font_size_pt * 25.4 / 72.0) / 2.0;
-    let text_width_mm = pt_to_mm(measure_text_width(text, face, options.font_size_pt));
-    let x = center_x - text_width_mm / 2.0;
-    let hex = encode_text_hex(text, face);
-    let _ = writeln!(
-        ops,
-        "BT /F1 {} Tf {} {} Td <{hex}> Tj ET",
+    let lines = layout_side(
+        text,
+        face,
         options.font_size_pt,
-        mm_to_pt(x),
-        mm_to_pt(baseline_y)
+        options.card_width_mm,
+        options.card_height_mm,
     );
+    if lines.is_empty() {
+        return;
+    }
+
+    let center_x = cell_x + options.card_width_mm / 2.0;
+    let ascent_ratio = f32::from(face.ascender()) / f32::from(face.units_per_em());
+    let total_height: f32 = lines
+        .iter()
+        .map(|l| pt_to_mm(l.size_pt * LINE_SPACING))
+        .sum();
+
+    // Top of the vertically-centred block; walk downward line by line.
+    let mut line_top = cell_y + options.card_height_mm.midpoint(total_height);
+    for line in &lines {
+        let line_height = pt_to_mm(line.size_pt * LINE_SPACING);
+        let baseline_y = line_top - pt_to_mm(line.size_pt * ascent_ratio);
+        let width_mm = pt_to_mm(measure_text_width(&line.text, face, line.size_pt));
+        let x = center_x - width_mm / 2.0;
+        let hex = encode_text_hex(&line.text, face);
+        let _ = writeln!(
+            ops,
+            "BT /F1 {} Tf {} {} Td <{hex}> Tj ET",
+            line.size_pt,
+            mm_to_pt(x),
+            mm_to_pt(baseline_y)
+        );
+        line_top -= line_height;
+    }
 }
 
 /// Add a single page backed by `content_id` and return its object id.
@@ -458,6 +584,55 @@ mod tests {
         let flipped_back_x = o.page_width_mm - bx - o.card_width_mm;
         assert!((flipped_back_x - fx).abs() < 1e-3);
         assert!((by - fy).abs() < 1e-3);
+    }
+
+    fn test_face() -> ttf_parser::Face<'static> {
+        ttf_parser::Face::parse(include_bytes!("../fonts/NotoSansJP-Bold.ttf"), 0).unwrap()
+    }
+
+    #[test]
+    fn wrap_breaks_long_text_into_multiple_lines() {
+        let face = test_face();
+        let lines = wrap_field("one two three four five six seven", &face, 12.0, 25.0);
+        assert!(lines.len() > 1, "long text should wrap: {lines:?}");
+        // No wrapped line is blank, and the words are preserved in order.
+        assert_eq!(lines.join(" "), "one two three four five six seven");
+    }
+
+    #[test]
+    fn headword_is_full_size_and_details_are_smaller() {
+        let face = test_face();
+        // Field 0 (headword) keeps the base size; field 1 (detail) is scaled down.
+        let lines = layout_side("word\ndetail", &face, 24.0, 80.0, 120.0);
+        assert_eq!(lines[0].text, "word");
+        assert!((lines[0].size_pt - 24.0).abs() < 1e-3);
+        assert!(lines[1].size_pt < lines[0].size_pt);
+    }
+
+    #[test]
+    fn detail_field_is_clipped_to_a_few_lines() {
+        let face = test_face();
+        // A very wordy detail on a narrow card wraps to many lines, then clips.
+        let detail = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+        let lines = layout_side(&format!("hw\n{detail}"), &face, 12.0, 30.0, 200.0);
+        let detail_lines = lines.iter().filter(|l| l.text != "hw").count();
+        assert!(
+            detail_lines <= MAX_SECONDARY_LINES,
+            "detail should clip to {MAX_SECONDARY_LINES}, got {detail_lines}"
+        );
+    }
+
+    #[test]
+    fn block_shrinks_to_fit_a_short_card() {
+        let face = test_face();
+        // Many lines into a very short card forces the shrink pass below base size.
+        let text = "a\nb c d e f g h i j k l m n o p q r s t u v w x y z";
+        let lines = layout_side(text, &face, 20.0, 60.0, 12.0);
+        assert!(
+            lines[0].size_pt < 20.0,
+            "headword should shrink to fit, got {}",
+            lines[0].size_pt
+        );
     }
 
     #[test]
