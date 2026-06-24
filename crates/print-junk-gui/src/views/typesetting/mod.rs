@@ -621,9 +621,14 @@ fn headings_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
                 num_field(ui, &mut st.size_pt, 6.0..=72.0, " pt")
             });
             changed |= form_row(ui, "Style", |ui| {
-                let mut c = ui.checkbox(&mut st.bold, "Bold").changed();
-                c |= ui.checkbox(&mut st.italic, "Italic").changed();
-                c
+                // One cell (see `optional_color_field`): two cells would add a
+                // third grid column and trigger the combo width feedback loop.
+                ui.horizontal(|ui| {
+                    let mut c = ui.checkbox(&mut st.bold, "Bold").changed();
+                    c |= ui.checkbox(&mut st.italic, "Italic").changed();
+                    c
+                })
+                .inner
             });
             changed |= form_row(ui, "Color", |ui| color_field(ui, &mut st.color));
             changed |= form_row(ui, "Align", |ui| {
@@ -759,16 +764,22 @@ fn color_field(ui: &mut egui::Ui, color: &mut Color) -> bool {
 /// Control-only optional color: an enable checkbox, plus a swatch when on.
 /// `default` seeds the color when first enabled.
 fn optional_color_field(ui: &mut egui::Ui, value: &mut Option<Color>, default: Color) -> bool {
-    let mut changed = false;
-    let mut enabled = value.is_some();
-    if ui.checkbox(&mut enabled, "").changed() {
-        *value = enabled.then_some(default);
-        changed = true;
-    }
-    if let Some(color) = value.as_mut() {
-        changed |= color_field(ui, color);
-    }
-    changed
+    // Keep both widgets in a single horizontal so the enclosing `form` Grid sees
+    // one cell — a second cell here would spill into a third grid column and make
+    // sibling combos' `available_width()` feed back, growing the panel each frame.
+    ui.horizontal(|ui| {
+        let mut changed = false;
+        let mut enabled = value.is_some();
+        if ui.checkbox(&mut enabled, "").changed() {
+            *value = enabled.then_some(default);
+            changed = true;
+        }
+        if let Some(color) = value.as_mut() {
+            changed |= color_field(ui, color);
+        }
+        changed
+    })
+    .inner
 }
 
 /// Control-only font-family combo (no label), filling the row width, with a
