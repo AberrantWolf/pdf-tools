@@ -33,7 +33,7 @@ impl MeasurementSystem {
 
 use crate::types::{FlashcardError, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlashcardOptions {
     pub page_width_mm: f32,
     pub page_height_mm: f32,

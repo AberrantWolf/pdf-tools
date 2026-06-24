@@ -18,6 +18,36 @@ pub async fn handle_load_csv(input_path: PathBuf, update_tx: &mpsc::UnboundedSen
     }
 }
 
+pub async fn handle_load_config(path: PathBuf, update_tx: &mpsc::UnboundedSender<PdfUpdate>) {
+    use pdf_flashcards::LoadedLayout;
+
+    match pdf_flashcards::load_flashcard_file(&path).await {
+        Ok(LoadedLayout::Project(project)) => {
+            log::info!(
+                "Loaded flashcard project ({} cards) from {}",
+                project.cards.len(),
+                path.display()
+            );
+            let _ = update_tx.send(PdfUpdate::FlashcardsConfigLoaded {
+                options: project.options,
+                cards: Some(project.cards),
+            });
+        }
+        Ok(LoadedLayout::Layout(options)) => {
+            log::info!("Loaded flashcard layout from {}", path.display());
+            let _ = update_tx.send(PdfUpdate::FlashcardsConfigLoaded {
+                options,
+                cards: None,
+            });
+        }
+        Err(e) => {
+            let _ = update_tx.send(PdfUpdate::Error {
+                message: format!("Failed to load layout: {e}"),
+            });
+        }
+    }
+}
+
 pub async fn handle_generate(
     cards: Vec<pdf_flashcards::Flashcard>,
     options: pdf_flashcards::FlashcardOptions,

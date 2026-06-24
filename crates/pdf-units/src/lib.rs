@@ -124,6 +124,32 @@ impl PaperSize {
         let (w, h) = self.dimensions_with_orientation(orientation);
         (mm_to_pt(w), mm_to_pt(h))
     }
+
+    /// Reverse-map portrait dimensions (mm) to a standard size, falling back to
+    /// [`PaperSize::Custom`] when they don't match a known size within tolerance.
+    /// Used when loading a saved layout to restore the paper-size selection.
+    pub fn from_dimensions_mm(width_mm: f32, height_mm: f32) -> Self {
+        const TOLERANCE_MM: f32 = 0.5;
+        for paper in [
+            Self::A3,
+            Self::A4,
+            Self::A5,
+            Self::B4,
+            Self::B5,
+            Self::Letter,
+            Self::Legal,
+            Self::Tabloid,
+        ] {
+            let (w, h) = paper.dimensions_mm();
+            if (w - width_mm).abs() < TOLERANCE_MM && (h - height_mm).abs() < TOLERANCE_MM {
+                return paper;
+            }
+        }
+        Self::Custom {
+            width_mm,
+            height_mm,
+        }
+    }
 }
 
 // A hand-written serde representation so saved configs stay human-readable:

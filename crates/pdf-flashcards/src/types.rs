@@ -6,6 +6,8 @@ pub enum FlashcardError {
     Csv(#[from] csv::Error),
     #[error("PDF error: {0}")]
     Pdf(String),
+    #[error("Config error: {0}")]
+    Config(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Task join error: {0}")]
@@ -45,7 +47,7 @@ impl std::fmt::Display for FlashcardWarning {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Flashcard {
     pub front: String,
     pub back: String,

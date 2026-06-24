@@ -411,6 +411,19 @@ impl eframe::App for PrintJunkApp {
                         let _ = self.command_tx.send(PdfCommand::ViewerLoad { path });
                     }
                 }
+                PdfUpdate::FlashcardsConfigLoaded { options, cards } => {
+                    self.flashcard_state.apply_options(&options);
+                    if let Some(cards) = cards {
+                        log::info!("Loaded project with {} cards", cards.len());
+                        self.flashcard_state.cards = cards;
+                        self.flashcard_state.csv_path.clear();
+                        self.flashcard_state.paste_text.clear();
+                    } else {
+                        log::info!("Applied layout template");
+                    }
+                    self.flashcard_state.needs_regeneration = true;
+                    self.progress = None;
+                }
                 PdfUpdate::ImposeLoaded { doc_id, page_count } => {
                     log::info!("Loaded PDF with {page_count} pages (ID: {doc_id:?})");
                     self.progress = None;

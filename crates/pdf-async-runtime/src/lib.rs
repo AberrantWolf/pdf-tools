@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 // Re-export types from library crates
 pub use pdf_flashcards::{Flashcard, FlashcardOptions};
-pub use pdf_impose::{ImpositionOptions, ImpositionStatistics};
 #[cfg(not(target_arch = "wasm32"))]
 pub use pdf_import::{ArchiveStatus, AssetReport};
+pub use pdf_impose::{ImpositionOptions, ImpositionStatistics};
 #[cfg(not(target_arch = "wasm32"))]
 pub use pdf_typeset::{
     FRONT_MATTER_ID, ImportStats, InputFormat, OutlineEntry, SectionOverride, TypesetConfig,
@@ -35,6 +35,10 @@ pub enum PdfCommand {
         cards: Vec<Flashcard>,
         options: FlashcardOptions,
         output_path: PathBuf,
+    },
+    /// Load a saved flashcard layout or project (auto-detects which).
+    FlashcardsLoadConfig {
+        path: PathBuf,
     },
     ImposeLoad {
         input_path: PathBuf,
@@ -160,6 +164,13 @@ pub enum PdfUpdate {
     FlashcardsComplete {
         path: PathBuf,
         card_count: usize,
+    },
+    /// A saved layout or project was loaded. `cards` is `Some` for a project
+    /// (replace the loaded set) and `None` for a layout-only template (keep
+    /// any existing cards).
+    FlashcardsConfigLoaded {
+        options: FlashcardOptions,
+        cards: Option<Vec<Flashcard>>,
     },
     ImposeLoaded {
         doc_id: DocumentId,

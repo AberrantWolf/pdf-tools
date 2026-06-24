@@ -22,6 +22,11 @@ pub enum SizingMode {
 #[serde(default)]
 pub struct FlashcardState {
     pub csv_path: String,
+
+    // Pasted card text — a transient input alternative to a CSV file; not persisted.
+    #[serde(skip)]
+    pub paste_text: String,
+
     pub paper_size: PaperSize,
     pub measurement_system: MeasurementSystem,
     pub sizing_mode: SizingMode,
@@ -64,6 +69,7 @@ impl Default for FlashcardState {
         let measurement_system = MeasurementSystem::Inches;
         Self {
             csv_path: String::new(),
+            paste_text: String::new(),
             paper_size: PaperSize::Letter,
             measurement_system,
             sizing_mode: SizingMode::Grid,
@@ -103,6 +109,26 @@ impl FlashcardState {
             column_spacing_mm: self.measurement_system.to_mm(self.column_spacing),
             font_size_pt: self.font_size_pt,
         }
+    }
+
+    /// Apply a loaded layout to the UI state. Page dimensions are reverse-mapped
+    /// to a paper size, and all measurements are converted into the user's
+    /// currently selected unit (the saved file is canonical millimetres).
+    pub fn apply_options(&mut self, options: &pdf_flashcards::FlashcardOptions) {
+        let sys = self.measurement_system;
+        self.paper_size =
+            PaperSize::from_dimensions_mm(options.page_width_mm, options.page_height_mm);
+        self.margin_top = sys.from_mm(options.margin_top_mm);
+        self.margin_bottom = sys.from_mm(options.margin_bottom_mm);
+        self.margin_left = sys.from_mm(options.margin_left_mm);
+        self.margin_right = sys.from_mm(options.margin_right_mm);
+        self.card_width = sys.from_mm(options.card_width_mm);
+        self.card_height = sys.from_mm(options.card_height_mm);
+        self.rows = options.rows;
+        self.columns = options.columns;
+        self.row_spacing = sys.from_mm(options.row_spacing_mm);
+        self.column_spacing = sys.from_mm(options.column_spacing_mm);
+        self.font_size_pt = options.font_size_pt;
     }
 
     pub fn convert_all_values(&mut self, old_system: MeasurementSystem) {
@@ -211,6 +237,31 @@ fn show_csv_section(
             let _ = command_tx.send(PdfCommand::FlashcardsLoadCsv { input_path: path });
         }
     });
+
+    ui.add_space(8.0);
+    ui.label("Or paste cards (one per line, front,back):");
+    ui.add(
+        egui::TextEdit::multiline(&mut state.paste_text)
+            .desired_rows(4)
+            .desired_width(f32::INFINITY)
+            .hint_text("apple,a fruit\nchien,dog"),
+    );
+    if ui
+        .add_enabled(
+            !state.paste_text.trim().is_empty(),
+            egui::Button::new("Load from text"),
+        )
+        .clicked()
+    {
+        let (cards, warnings) = pdf_flashcards::parse_cards(&state.paste_text);
+        for w in &warnings {
+            log::warn!("Pasted cards: {w}");
+        }
+        log::info!("Loaded {} cards from pasted text", cards.len());
+        state.cards = cards;
+        state.csv_path.clear();
+        state.needs_regeneration = true;
+    }
 
     if !state.cards.is_empty() {
         ui.label(format!("Loaded: {} cards", state.cards.len()));
@@ -394,9 +445,90 @@ fn show_actions_section(
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    show_layout_buttons(ui, state, command_tx);
+
     // Auto-regenerate preview when settings change
     if state.needs_regeneration && can_generate {
         generate_preview(state, command_tx);
+    }
+}
+
+/// Save/load buttons for layouts (templates) and projects (layout + cards).
+#[cfg(not(target_arch = "wasm32"))]
+fn show_layout_buttons(
+    ui: &mut egui::Ui,
+    state: &FlashcardState,
+    command_tx: &mpsc::UnboundedSender<PdfCommand>,
+) {
+    ui.add_space(6.0);
+    ui.label("Layout & Project:");
+
+    // Saving a project requires cards; a layout template is always available.
+    let has_cards = !state.cards.is_empty();
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(has_cards, egui::Button::new("💾 Save Project..."))
+            .on_hover_text("Save the page layout together with the loaded cards")
+            .clicked()
+        {
+            save_project(state);
+        }
+        if ui
+            .button("Save Layout...")
+            .on_hover_text("Save just the page layout as a reusable template")
+            .clicked()
+        {
+            save_layout(state);
+        }
+    });
+
+    if ui
+        .button("📂 Load Layout / Project...")
+        .on_hover_text("Load a saved layout template or full project")
+        .clicked()
+        && let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON", &["json"])
+            .pick_file()
+    {
+        let _ = command_tx.send(PdfCommand::FlashcardsLoadConfig { path });
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_project(state: &FlashcardState) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter("JSON", &["json"])
+        .set_file_name("flashcards_project.json")
+        .save_file()
+    {
+        let project = pdf_flashcards::FlashcardProject {
+            options: state.to_options(),
+            cards: state.cards.clone(),
+        };
+        tokio::spawn(async move {
+            match project.save(&path).await {
+                Ok(()) => log::info!("Project saved to {}", path.display()),
+                Err(e) => log::error!("Failed to save project: {e}"),
+            }
+        });
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_layout(state: &FlashcardState) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter("JSON", &["json"])
+        .set_file_name("flashcard_layout.json")
+        .save_file()
+    {
+        let options = state.to_options();
+        tokio::spawn(async move {
+            match options.save(&path).await {
+                Ok(()) => log::info!("Layout saved to {}", path.display()),
+                Err(e) => log::error!("Failed to save layout: {e}"),
+            }
+        });
     }
 }
 

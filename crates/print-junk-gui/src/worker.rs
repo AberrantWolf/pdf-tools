@@ -44,6 +44,9 @@ async fn process_command(
         } => {
             handlers::flashcards::handle_generate(cards, options, output_path, update_tx).await;
         }
+        PdfCommand::FlashcardsLoadConfig { path } => {
+            handlers::flashcards::handle_load_config(path, update_tx).await;
+        }
         PdfCommand::ImposeLoad { input_path } => {
             handlers::impose::handle_load(input_path, update_tx).await;
         }
