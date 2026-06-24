@@ -3174,6 +3174,7 @@ dependencies = [
 [[package]]
 name = "junk-libs-egui-docview"
 version = "0.1.0"
+source = "git+https://github.com/AberrantWolf/junk-libs#487ef798974d41904963330cb6714ddba98db0a0"
 dependencies = [
  "egui",
  "image",
@@ -3184,6 +3185,7 @@ dependencies = [
 [[package]]
 name = "junk-libs-platen"
 version = "0.1.0"
+source = "git+https://github.com/AberrantWolf/junk-libs#487ef798974d41904963330cb6714ddba98db0a0"
 dependencies = [
  "anyhow",
  "hayro 0.7.1",
@@ -3195,6 +3197,7 @@ dependencies = [
 [[package]]
 name = "junk-libs-raster"
 version = "0.1.0"
+source = "git+https://github.com/AberrantWolf/junk-libs#487ef798974d41904963330cb6714ddba98db0a0"
 dependencies = [
  "image",
 ]
