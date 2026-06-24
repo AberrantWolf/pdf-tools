@@ -16,26 +16,44 @@ mod worker;
 
 fn setup_fonts(ctx: &egui::Context) {
     use egui::FontData;
+    use egui::FontFamily::{Monospace, Name, Proportional};
+    use egui::epaint::text::FontPriority::{Highest, Lowest};
     use egui::epaint::text::{FontInsert, InsertFontFamily};
 
-    // Add Noto Sans as the primary proportional font
+    let fam = |family, priority| InsertFontFamily { family, priority };
+
+    // Noto Sans: the primary proportional (UI body) face, and a fallback for the
+    // "display" family so any glyph the serif lacks still renders.
     ctx.add_font(FontInsert::new(
         "noto_sans",
         FontData::from_static(include_bytes!("../fonts/NotoSans-Regular.ttf")),
-        vec![InsertFontFamily {
-            family: egui::FontFamily::Proportional,
-            priority: egui::epaint::text::FontPriority::Highest,
-        }],
+        vec![
+            fam(Proportional, Highest),
+            fam(Name("display".into()), Lowest),
+        ],
     ));
 
-    // Add Noto Sans Symbols2 as a fallback for symbols
+    // Noto Sans Symbols2: glyph/symbol fallback.
     ctx.add_font(FontInsert::new(
         "noto_symbols",
         FontData::from_static(include_bytes!("../fonts/NotoSansSymbols2-Regular.ttf")),
-        vec![InsertFontFamily {
-            family: egui::FontFamily::Proportional,
-            priority: egui::epaint::text::FontPriority::Lowest,
-        }],
+        vec![fam(Proportional, Lowest)],
+    ));
+
+    // IBM Plex Mono: measurement values render in this monospace face (tabular
+    // figures line up in columns).
+    ctx.add_font(FontInsert::new(
+        "plex_mono",
+        FontData::from_static(include_bytes!("../fonts/IBMPlexMono-Regular.ttf")),
+        vec![fam(Monospace, Highest)],
+    ));
+
+    // IBM Plex Serif (SemiBold): the display face for headings and the wordmark,
+    // registered under a custom "display" family.
+    ctx.add_font(FontInsert::new(
+        "plex_serif",
+        FontData::from_static(include_bytes!("../fonts/IBMPlexSerif-SemiBold.ttf")),
+        vec![fam(Name("display".into()), Highest)],
     ));
 }
 

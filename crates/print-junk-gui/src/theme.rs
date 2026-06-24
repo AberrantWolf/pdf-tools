@@ -38,11 +38,12 @@ const PRESS_BLUE: Color32 = Color32::from_rgb(94, 137, 160);
 pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.global_style()).clone();
 
-    // --- A real type scale: size carries hierarchy (one weight available) ---
+    // --- A type scale with three voices: a serif display for headings, the
+    // sans body face, and a monospace for measurements. ---
     style.text_styles = [
         (
             TextStyle::Heading,
-            FontId::new(21.0, FontFamily::Proportional),
+            FontId::new(22.0, FontFamily::Name("display".into())),
         ),
         (TextStyle::Body, FontId::new(14.5, FontFamily::Proportional)),
         (
@@ -60,6 +61,10 @@ pub fn apply(ctx: &egui::Context) {
         ),
     ]
     .into();
+
+    // Numeric values (sliders, drag values, margin/size boxes) render in the
+    // monospace face so columns of mm/pt line up.
+    style.drag_value_text_style = TextStyle::Monospace;
 
     // --- Breathing room, consistent across modules --------------------------
     style.spacing.item_spacing = vec2(8.0, 7.0);
