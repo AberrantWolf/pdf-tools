@@ -28,8 +28,8 @@ pub(crate) const HAIRLINE: Color32 = Color32::from_rgb(58, 55, 45);
 pub(crate) const VERMILION: Color32 = Color32::from_rgb(210, 59, 42);
 /// A darker vermilion that paper text still reads on (selection fills).
 const VERMILION_INK: Color32 = Color32::from_rgb(120, 40, 30);
-/// Brass furniture — the hover/secondary highlight.
-const BRASS: Color32 = Color32::from_rgb(181, 137, 60);
+/// Brass furniture — the hover/secondary highlight, and section-heading eyebrows.
+pub(crate) const BRASS: Color32 = Color32::from_rgb(181, 137, 60);
 /// Tints for the hovered/active widget grounds.
 const BRASS_INK: Color32 = Color32::from_rgb(58, 46, 22);
 const VERMILION_TINT: Color32 = Color32::from_rgb(58, 26, 18);

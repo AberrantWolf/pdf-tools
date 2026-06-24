@@ -18,7 +18,9 @@ use tokio::sync::mpsc;
 mod outline;
 
 use super::ViewerState;
-use crate::ui_components::{enum_selector, labeled_drag_clamped, paper_size_picker};
+use crate::ui_components::{
+    enum_selector, labeled_drag_clamped, paper_size_picker, section_heading,
+};
 
 /// A document imported from a URL / arXiv id / file. The raw HTML and the assets
 /// fetched during conversion are persisted (so restore is offline and re-applies
@@ -198,7 +200,7 @@ pub fn show_typesetting(
         .show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Typesetting");
-                ui.separator();
+                ui.add_space(2.0);
 
                 source_section(ui, state, command_tx);
                 section_gap(ui);
@@ -248,9 +250,9 @@ pub fn show_typesetting(
 }
 
 fn section_gap(ui: &mut egui::Ui) {
-    ui.add_space(10.0);
-    ui.separator();
-    ui.add_space(4.0);
+    // The brass eyebrow + rule that opens each section is the divider now, so no
+    // separate rule here — just breathing room before the next eyebrow.
+    ui.add_space(8.0);
 }
 
 // =============================================================================
@@ -262,6 +264,7 @@ fn source_section(
     state: &mut TypesettingState,
     command_tx: &mpsc::UnboundedSender<PdfCommand>,
 ) {
+    section_heading(ui, "Source");
     import_row(ui, state, command_tx);
 
     if state.import.is_some() {
@@ -509,6 +512,7 @@ fn maybe_regenerate(state: &mut TypesettingState, command_tx: &mpsc::UnboundedSe
 }
 
 fn page_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
+    section_heading(ui, "Page");
     let mut changed = false;
     changed |= paper_size_picker(ui, "ts_paper", "Page size:", &mut state.config.page_size);
 
@@ -533,7 +537,7 @@ fn page_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn margins_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Margins:");
+    section_heading(ui, "Margins");
     let m = &mut state.config;
     let mut changed = false;
     changed |= labeled_drag_clamped(ui, "Top", &mut m.margin_top_mm, 0.0..=80.0, " mm");
@@ -558,7 +562,7 @@ fn margins_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn fonts_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Body text:");
+    section_heading(ui, "Body text");
     let mut changed = false;
     changed |= font_family_picker(
         ui,
@@ -591,7 +595,7 @@ fn fonts_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 /// Per-level heading editor: pick a level, then edit its style. Only the
 /// selected level's controls are shown to keep the panel compact.
 fn headings_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Headings:");
+    section_heading(ui, "Headings");
 
     // Clamp first — a skipped/zeroed value on restore must not underflow below.
     state.heading_edit_level = state.heading_edit_level.clamp(1, 6);
@@ -638,7 +642,7 @@ fn headings_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Tables:");
+    section_heading(ui, "Tables");
     let t = &mut state.config.table;
     let mut changed = false;
 
@@ -672,7 +676,7 @@ fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn document_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Document & front matter:");
+    section_heading(ui, "Document & front matter");
     let c = &mut state.config;
     let mut changed = false;
 
@@ -816,7 +820,7 @@ fn font_family_picker(
 }
 
 fn spacing_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Spacing:");
+    section_heading(ui, "Spacing");
     let c = &mut state.config;
     let mut changed = false;
     changed |= labeled_drag_clamped(ui, "Line leading", &mut c.line_spacing_em, 0.0..=2.0, " em");
@@ -842,7 +846,7 @@ fn spacing_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn page_breaks_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    ui.label("Page-break rules:");
+    section_heading(ui, "Page breaks");
     ui.label(
         egui::RichText::new("Insert a page break at lines matching a pattern.")
             .small()
@@ -901,6 +905,7 @@ fn actions_section(
     state: &mut TypesettingState,
     command_tx: &mpsc::UnboundedSender<PdfCommand>,
 ) {
+    section_heading(ui, "Output");
     // An imported doc compiles from its cached converted artifact; plain text
     // goes through the markup path. Both are gated on having something to output.
     let converted = state

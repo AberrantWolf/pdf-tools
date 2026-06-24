@@ -2,6 +2,30 @@ use eframe::egui;
 use pdf_units::PaperSize;
 use std::path::PathBuf;
 
+/// A section heading for flat settings panels: a brass, uppercase "eyebrow" with
+/// a hairline rule running off to the right — a deliberately different voice from
+/// the per-control labels beneath it, so the panel's structure stays scannable.
+pub fn section_heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let label = ui.label(
+            egui::RichText::new(text.to_uppercase())
+                .color(crate::theme::BRASS)
+                .size(12.0),
+        );
+        // A hairline rule filling the remaining width, on the label's baseline.
+        let rest = ui.available_rect_before_wrap();
+        if rest.width() > 12.0 {
+            ui.painter().hline(
+                (rest.left() + 6.0)..=rest.right(),
+                label.rect.center().y,
+                egui::Stroke::new(1.0, crate::theme::HAIRLINE),
+            );
+        }
+    });
+    ui.add_space(2.0);
+}
+
 /// The standard named paper sizes offered in pickers (excludes `Custom`).
 pub const STANDARD_PAPER_SIZES: [(PaperSize, &str); 8] = [
     (PaperSize::Letter, "Letter"),
