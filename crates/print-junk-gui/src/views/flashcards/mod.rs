@@ -178,6 +178,16 @@ impl FlashcardState {
         (self.card_width, self.card_height) = layout.calculate_card_size_from_grid();
     }
 
+    /// Recompute whichever dimension the current sizing mode derives from the
+    /// available area: the card size in Grid mode, the rows/columns that fit in
+    /// Card-size mode. Call whenever the page, margins, or spacing change.
+    pub fn recalculate_for_mode(&mut self) {
+        match self.sizing_mode {
+            SizingMode::Grid => self.recalculate_card_size_from_grid(),
+            SizingMode::CardSize => self.recalculate_grid_from_card_size(),
+        }
+    }
+
     fn to_layout(&self) -> FlashcardLayout {
         FlashcardLayout {
             paper_size: self.paper_size,
@@ -336,7 +346,9 @@ fn show_paper_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
     if old_system != state.measurement_system {
         state.convert_all_values(old_system);
     }
+    // A new paper size changes the printable area, so refit the derived dimension.
     if changed {
+        state.recalculate_for_mode();
         state.needs_regeneration = true;
     }
 }
@@ -359,7 +371,9 @@ fn show_margins_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
             num_field(ui, &mut state.margin_right, 0.0..=max, &unit)
         });
     });
+    // Margins change the printable area, so refit the derived dimension.
     if changed {
+        state.recalculate_for_mode();
         state.needs_regeneration = true;
     }
 }
@@ -428,7 +442,10 @@ fn show_spacing_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
             num_field(ui, &mut state.row_spacing, 0.0..=max, &unit)
         });
     });
+    // Gaps change how many cards fit (Card-size mode) or how big they are
+    // (Grid mode), so refit the derived dimension.
     if changed {
+        state.recalculate_for_mode();
         state.needs_regeneration = true;
     }
 }
