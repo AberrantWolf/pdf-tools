@@ -26,6 +26,85 @@ pub fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
 }
 
+/// A two-column "label : control" settings form. The label column auto-sizes to
+/// the widest label (no magic widths) and inputs align in the second column.
+/// Call [`form_row`] for each row inside `contents`.
+pub fn form(ui: &mut egui::Ui, id: &str, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([10.0, ui.spacing().item_spacing.y.max(6.0)])
+        .show(ui, |ui| contents(ui));
+}
+
+/// One row of a [`form`]: a left-aligned label, then `add_control`. Keep labels
+/// short so the gutter stays narrow. Returns whatever `add_control` returns
+/// (e.g. a `changed` bool).
+pub fn form_row<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    add_control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.label(label);
+    });
+    let result = add_control(ui);
+    ui.end_row();
+    result
+}
+
+/// Like [`form_row`], but the label carries a muted info icon that reveals
+/// `info` on hover — for short labels (e.g. bindery terms) whose full meaning is
+/// worth a tooltip without lengthening the gutter.
+pub fn form_row_info<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    info: &str,
+    add_control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.label(label).on_hover_text(info);
+        info_icon(ui, info);
+    });
+    let result = add_control(ui);
+    ui.end_row();
+    result
+}
+
+/// A small "i in a circle" info marker, painted (not a glyph, so it renders in
+/// any font) and revealing `tooltip` on hover.
+fn info_icon(ui: &mut egui::Ui, tooltip: &str) {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(14.0, ui.spacing().interact_size.y),
+        egui::Sense::hover(),
+    );
+    let c = rect.center();
+    let color = crate::theme::NEWSPRINT;
+    let painter = ui.painter();
+    painter.circle_stroke(c, 5.5, egui::Stroke::new(1.0, color));
+    painter.circle_filled(egui::pos2(c.x, c.y - 2.3), 1.0, color); // dot of the "i"
+    painter.line_segment(
+        [egui::pos2(c.x, c.y - 0.3), egui::pos2(c.x, c.y + 2.8)],
+        egui::Stroke::new(1.2, color),
+    ); // stem of the "i"
+    response.on_hover_text(tooltip);
+}
+
+/// A fixed-width numeric field for form rows, so values with different digit
+/// counts keep the same box size. Returns whether the value changed.
+pub fn num_field<T: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    value: &mut T,
+    range: std::ops::RangeInclusive<T>,
+    suffix: &str,
+) -> bool {
+    const WIDTH: f32 = 66.0;
+    ui.add_sized(
+        [WIDTH, ui.spacing().interact_size.y],
+        egui::DragValue::new(value).range(range).suffix(suffix),
+    )
+    .changed()
+}
+
 /// The standard named paper sizes offered in pickers (excludes `Custom`).
 pub const STANDARD_PAPER_SIZES: [(PaperSize, &str); 8] = [
     (PaperSize::Letter, "Letter"),
@@ -45,6 +124,30 @@ pub const STANDARD_PAPER_SIZES: [(PaperSize, &str); 8] = [
 /// if the selection changed.
 pub fn paper_size_picker(ui: &mut egui::Ui, id: &str, label: &str, value: &mut PaperSize) -> bool {
     enum_selector(ui, id, label, value, &STANDARD_PAPER_SIZES)
+}
+
+/// Control-only enum dropdown (no label), filling the available width — for use
+/// as the control inside a [`form_row`].
+pub fn enum_combo<T>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) -> bool
+where
+    T: PartialEq + Clone,
+{
+    let mut changed = false;
+    let current = options
+        .iter()
+        .find(|(v, _)| v == value)
+        .map_or("Unknown", |(_, t)| *t);
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(current)
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for (option_value, option_text) in options {
+                changed |= ui
+                    .selectable_value(value, option_value.clone(), *option_text)
+                    .changed();
+            }
+        });
+    changed
 }
 
 /// Builder for creating sliders with automatic change tracking

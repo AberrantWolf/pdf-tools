@@ -19,7 +19,8 @@ mod outline;
 
 use super::ViewerState;
 use crate::ui_components::{
-    enum_selector, labeled_drag_clamped, paper_size_picker, section_heading,
+    STANDARD_PAPER_SIZES, enum_combo, enum_selector, form, form_row, form_row_info,
+    labeled_drag_clamped, num_field, section_heading,
 };
 
 /// A document imported from a URL / arXiv id / file. The raw HTML and the assets
@@ -513,24 +514,23 @@ fn maybe_regenerate(state: &mut TypesettingState, command_tx: &mpsc::UnboundedSe
 
 fn page_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
     section_heading(ui, "Page");
+    let c = &mut state.config;
     let mut changed = false;
-    changed |= paper_size_picker(ui, "ts_paper", "Page size:", &mut state.config.page_size);
-
     let orientations = [
         (Orientation::Portrait, "Portrait"),
         (Orientation::Landscape, "Landscape"),
     ];
-    changed |= enum_selector(
-        ui,
-        "ts_orientation",
-        "Orientation:",
-        &mut state.config.orientation,
-        &orientations,
-    );
-    changed |= ui
-        .checkbox(&mut state.config.page_numbers, "Page numbers")
-        .changed();
-
+    form(ui, "ts_page", |ui| {
+        changed |= form_row(ui, "Page size", |ui| {
+            enum_combo(ui, "ts_paper", &mut c.page_size, &STANDARD_PAPER_SIZES)
+        });
+        changed |= form_row(ui, "Orientation", |ui| {
+            enum_combo(ui, "ts_orientation", &mut c.orientation, &orientations)
+        });
+        changed |= form_row(ui, "Page numbers", |ui| {
+            ui.checkbox(&mut c.page_numbers, "").changed()
+        });
+    });
     if changed {
         state.needs_regeneration = true;
     }
@@ -540,22 +540,20 @@ fn margins_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
     section_heading(ui, "Margins");
     let m = &mut state.config;
     let mut changed = false;
-    changed |= labeled_drag_clamped(ui, "Top", &mut m.margin_top_mm, 0.0..=80.0, " mm");
-    changed |= labeled_drag_clamped(ui, "Bottom", &mut m.margin_bottom_mm, 0.0..=80.0, " mm");
-    changed |= labeled_drag_clamped(
-        ui,
-        "Inner (spine)",
-        &mut m.margin_inner_mm,
-        0.0..=80.0,
-        " mm",
-    );
-    changed |= labeled_drag_clamped(
-        ui,
-        "Outer (fore-edge)",
-        &mut m.margin_outer_mm,
-        0.0..=80.0,
-        " mm",
-    );
+    let mm = |ui: &mut egui::Ui, value: &mut f32| num_field(ui, value, 0.0..=80.0, " mm");
+    form(ui, "ts_margins", |ui| {
+        changed |= form_row(ui, "Top", |ui| mm(ui, &mut m.margin_top_mm));
+        changed |= form_row(ui, "Bottom", |ui| mm(ui, &mut m.margin_bottom_mm));
+        changed |= form_row_info(ui, "Spine", "Inner margin, at the binding edge", |ui| {
+            mm(ui, &mut m.margin_inner_mm)
+        });
+        changed |= form_row_info(
+            ui,
+            "Fore-edge",
+            "Outer margin, at the front (cut) edge",
+            |ui| mm(ui, &mut m.margin_outer_mm),
+        );
+    });
     if changed {
         state.needs_regeneration = true;
     }
