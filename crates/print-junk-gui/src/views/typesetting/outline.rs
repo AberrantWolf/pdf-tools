@@ -68,9 +68,7 @@ pub(super) fn show_outline_rail(ui: &mut egui::Ui, state: &mut TypesettingState)
                             true,
                             !inside_hidden,
                         );
-                        if !inside_hidden
-                            && overrides.get(&entry.id).is_some_and(|ov| ov.hidden)
-                        {
+                        if !inside_hidden && overrides.get(&entry.id).is_some_and(|ov| ov.hidden) {
                             hidden_at = Some(entry.level);
                         }
                     }
@@ -120,7 +118,11 @@ fn section_row(
                 changed = true;
             }
 
-            let display = if title.is_empty() { "(untitled)" } else { title };
+            let display = if title.is_empty() {
+                "(untitled)"
+            } else {
+                title
+            };
             let mut text = egui::RichText::new(truncated(display));
             if ov.hidden {
                 text = text.weak().strikethrough();

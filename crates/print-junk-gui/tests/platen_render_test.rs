@@ -1,7 +1,7 @@
 //! Consumer-side smoke test: proves print-junk's `pdf-viewer` feature wiring
 //! renders a PDF through the shared `junk-libs-platen` crate. The render core
 //! itself is unit-tested in junk-libs; this guards the consumer dependency and
-//! feature plumbing. (Under PDFium this also had to guard a vendored binary
+//! feature plumbing. (Under `PDFium` this also had to guard a vendored binary
 //! binding at runtime — pure-Rust `platen` has nothing to bind.)
 #![cfg(all(not(target_arch = "wasm32"), feature = "pdf-viewer"))]
 

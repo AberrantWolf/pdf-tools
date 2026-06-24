@@ -171,8 +171,10 @@ pub async fn handle_prefetch_pages(
         if let Some(source) = state.get_document(doc_id).cloned() {
             // Render to cache silently (no UI update)
             let scale = render_scale(zoom_level);
-            match tokio::task::spawn_blocking(move || render_source_page(&source, page_index, scale))
-                .await
+            match tokio::task::spawn_blocking(move || {
+                render_source_page(&source, page_index, scale)
+            })
+            .await
             {
                 Ok(Ok((rgba_data, width, height, _, _))) => {
                     state.add_to_cache(

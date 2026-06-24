@@ -19,11 +19,9 @@ pub use config::{
     BreakPosition, Color, FontChoice, HAlign, HeadingStyle, InputFormat, PageBreakRule,
     TableBorder, TableStyle, TypesetConfig, TypesetInput,
 };
-pub use html::{
-    AssetResolver, CapturingResolver, ImportStats, ImportedDoc, MapResolver, NoAssets,
-};
-pub use outline::{FRONT_MATTER_ID, OutlineEntry, SectionOverride, assemble_body};
+pub use html::{AssetResolver, CapturingResolver, ImportStats, ImportedDoc, MapResolver, NoAssets};
 pub use math::{MathAsset, MathPipeline, MathRender, MathSource, Tex2TypstRs, TexMathEngine, Tier};
+pub use outline::{FRONT_MATTER_ID, OutlineEntry, SectionOverride, assemble_body};
 
 use typst::layout::PagedDocument;
 use typst_as_lib::typst_kit_options::TypstKitFontOptions;

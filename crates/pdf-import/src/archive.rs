@@ -163,13 +163,10 @@ fn converted_graphics(files: &HashMap<String, Vec<u8>>) -> Vec<String> {
     let main = files
         .iter()
         .filter(|(name, _)| has_ext(name, "tex"))
-        .find(|(_, bytes)| {
-            String::from_utf8_lossy(bytes).contains("\\documentclass")
-        })
+        .find(|(_, bytes)| String::from_utf8_lossy(bytes).contains("\\documentclass"))
         .map(|(name, _)| name.clone())
         .or_else(|| {
-            let mut texs: Vec<&String> =
-                files.keys().filter(|n| has_ext(n, "tex")).collect();
+            let mut texs: Vec<&String> = files.keys().filter(|n| has_ext(n, "tex")).collect();
             texs.sort();
             (texs.len() == 1).then(|| texs[0].clone())
         });
@@ -244,7 +241,8 @@ fn resolve_graphic(arg: &str, files: &HashMap<String, Vec<u8>>) -> Option<String
 fn rasterize_pdf(bytes: &[u8]) -> Option<Vec<u8>> {
     // Probe the native size first so the scale can be capped before the real
     // render; figure pages are small, so the probe render is cheap.
-    let (_, (w_pts, h_pts)) = junk_libs_platen::render_page_bitmap_from_bytes(bytes, 0, 0.05).ok()?;
+    let (_, (w_pts, h_pts)) =
+        junk_libs_platen::render_page_bitmap_from_bytes(bytes, 0, 0.05).ok()?;
     let scale = (TARGET_DPI / 72.0).min(MAX_EDGE_PX / w_pts.max(h_pts).max(1.0));
     let (image, _) = junk_libs_platen::render_page_bitmap_from_bytes(bytes, 0, scale).ok()?;
 
@@ -279,7 +277,10 @@ mod tests {
 \input{vis}
 ",
             ),
-            ("intro.tex", r"\includegraphics[width=\textwidth]{./fig/a.pdf}"),
+            (
+                "intro.tex",
+                r"\includegraphics[width=\textwidth]{./fig/a.pdf}",
+            ),
             (
                 "vis.tex",
                 "% \\includegraphics{fig/commented.pdf}\n\\includegraphics{fig/b}\n",
@@ -305,11 +306,11 @@ mod tests {
 
     #[test]
     fn vector_sibling_matches_stem() {
-        let a = archive(&[
-            ("ms.tex", r"\documentclass{a}"),
-            ("Figures/f.pdf", "%PDF-"),
-        ]);
-        assert_eq!(a.vector_sibling("Figures/f.png").as_deref(), Some("Figures/f.pdf"));
+        let a = archive(&[("ms.tex", r"\documentclass{a}"), ("Figures/f.pdf", "%PDF-")]);
+        assert_eq!(
+            a.vector_sibling("Figures/f.png").as_deref(),
+            Some("Figures/f.pdf")
+        );
         assert_eq!(a.vector_sibling("Figures/other.png"), None);
     }
 

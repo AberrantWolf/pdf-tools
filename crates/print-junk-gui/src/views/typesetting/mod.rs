@@ -67,10 +67,7 @@ mod asset_base64 {
     use base64::engine::general_purpose::STANDARD;
     use serde::{Deserialize as _, Deserializer, Serialize as _, Serializer};
 
-    pub fn serialize<S: Serializer>(
-        assets: &[(String, Vec<u8>)],
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(assets: &[(String, Vec<u8>)], s: S) -> Result<S::Ok, S::Error> {
         let encoded: Vec<(&str, String)> = assets
             .iter()
             .map(|(name, bytes)| (name.as_str(), STANDARD.encode(bytes)))
@@ -373,11 +370,15 @@ fn asset_status_row(ui: &mut egui::Ui, report: &AssetReport) -> bool {
             // Non-arXiv sources have no e-print archive — nothing to report.
             ArchiveStatus::NotApplicable => {}
             ArchiveStatus::Disabled => {
-                ui.label(egui::RichText::new("⛶ hi-res figures unavailable").small().weak())
-                    .on_hover_text(
-                        "This build has no hi-res figure support \
+                ui.label(
+                    egui::RichText::new("⛶ hi-res figures unavailable")
+                        .small()
+                        .weak(),
+                )
+                .on_hover_text(
+                    "This build has no hi-res figure support \
                          (the hires-import feature was disabled).",
-                    );
+                );
             }
             ArchiveStatus::Fetched {
                 files,
@@ -987,7 +988,10 @@ mod tests {
         let json = serde_json::to_string(&session).unwrap();
         // Asset bytes are base64 text, not a numeric array; transient fields skipped.
         assert!(json.contains("AAEC/w=="), "assets should be base64: {json}");
-        assert!(!json.contains("converted"), "converted is transient: {json}");
+        assert!(
+            !json.contains("converted"),
+            "converted is transient: {json}"
+        );
 
         let back: ImportSession = serde_json::from_str(&json).unwrap();
         assert_eq!(back.source, session.source);

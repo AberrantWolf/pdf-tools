@@ -88,11 +88,7 @@ pub fn assemble_body<'a, S: std::hash::BuildHasher>(
 ) -> Cow<'a, str> {
     let effective = |id: &str| overrides.get(id).copied().unwrap_or_default();
     let front_hidden = effective(FRONT_MATTER_ID).hidden;
-    if !front_hidden
-        && outline
-            .iter()
-            .all(|e| effective(&e.id).is_default())
-    {
+    if !front_hidden && outline.iter().all(|e| effective(&e.id).is_default()) {
         return Cow::Borrowed(body);
     }
 
@@ -239,14 +235,20 @@ mod tests {
         let overrides = HashMap::from([("S1".to_string(), hidden())]);
         let out = assemble_body(BODY, &outline(), &overrides);
         assert!(!out.contains("Intro") && !out.contains("Sub"), "{out}");
-        assert!(out.starts_with("front") && out.contains("= Methods"), "{out}");
+        assert!(
+            out.starts_with("front") && out.contains("= Methods"),
+            "{out}"
+        );
     }
 
     #[test]
     fn hiding_a_subsection_keeps_its_parent_and_siblings() {
         let overrides = HashMap::from([("S1.1".to_string(), hidden())]);
         let out = assemble_body(BODY, &outline(), &overrides);
-        assert!(out.contains("= Intro") && out.contains("intro text"), "{out}");
+        assert!(
+            out.contains("= Intro") && out.contains("intro text"),
+            "{out}"
+        );
         assert!(!out.contains("== Sub"), "{out}");
         assert!(out.contains("= Methods"), "{out}");
     }
@@ -289,7 +291,8 @@ mod tests {
 
     #[test]
     fn citations_to_visible_labels_are_kept() {
-        let body = "See #link(<bib-bib1>)[Doe] here.\n= Hide me\nnothing\n= Refs\nentry <bib-bib1>\n";
+        let body =
+            "See #link(<bib-bib1>)[Doe] here.\n= Hide me\nnothing\n= Refs\nentry <bib-bib1>\n";
         let outline = vec![
             entry("gone", 1, body.find("= Hide me").unwrap()),
             entry("refs", 1, body.find("= Refs").unwrap()),

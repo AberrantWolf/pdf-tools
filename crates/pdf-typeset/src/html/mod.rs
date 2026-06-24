@@ -525,7 +525,11 @@ impl<'r> Importer<'r> {
                 let number = tr
                     .select(&self.eqn_tag_sel)
                     .next()
-                    .map(|t| collapse_ws(&t.text().collect::<String>()).trim().to_string())
+                    .map(|t| {
+                        collapse_ws(&t.text().collect::<String>())
+                            .trim()
+                            .to_string()
+                    })
                     .filter(|n| !n.is_empty());
                 Some((tex, number))
             })
@@ -816,7 +820,10 @@ mod tests {
         let doc = import(SAMPLE, &NoAssets);
         assert_eq!(doc.outline.len(), 1, "body: {}", doc.body);
         let e = &doc.outline[0];
-        assert_eq!((e.id.as_str(), e.level, e.title.as_str()), ("S1", 1, "Introduction"));
+        assert_eq!(
+            (e.id.as_str(), e.level, e.title.as_str()),
+            ("S1", 1, "Introduction")
+        );
         assert!(
             doc.body[e.offset..].starts_with("= Introduction"),
             "offset points at the heading: {}",
@@ -865,7 +872,11 @@ mod tests {
             "list marker: {}",
             doc.body
         );
-        assert!(!doc.body.contains('\u{2022}'), "source bullet survived: {}", doc.body);
+        assert!(
+            !doc.body.contains('\u{2022}'),
+            "source bullet survived: {}",
+            doc.body
+        );
     }
 
     /// Display equations arrive as `LaTeXML` layout tables; they must render as
@@ -886,13 +897,21 @@ mod tests {
         </article></body></html>
         "#;
         let doc = import(EQN, &NoAssets);
-        assert!(!doc.body.contains("#table("), "no visible table: {}", doc.body);
+        assert!(
+            !doc.body.contains("#table("),
+            "no visible table: {}",
+            doc.body
+        );
         assert!(
             doc.body.contains("#grid(columns: (1fr, auto)"),
             "numbered equation grid: {}",
             doc.body
         );
-        assert!(doc.body.contains("(1)"), "equation number kept: {}", doc.body);
+        assert!(
+            doc.body.contains("(1)"),
+            "equation number kept: {}",
+            doc.body
+        );
         assert!(doc.body.contains('$'), "display math present: {}", doc.body);
         assert_eq!(doc.stats.math_tex, 1);
     }
@@ -920,7 +939,11 @@ mod tests {
         </article></body></html>
         "#;
         let doc = import(GROUP, &NoAssets);
-        assert!(!doc.body.contains("#table("), "no visible table: {}", doc.body);
+        assert!(
+            !doc.body.contains("#table("),
+            "no visible table: {}",
+            doc.body
+        );
         assert_eq!(doc.stats.math_tex, 2, "one equation per row: {}", doc.body);
     }
 
