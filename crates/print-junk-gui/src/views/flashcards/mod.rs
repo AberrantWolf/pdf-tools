@@ -16,6 +16,11 @@ use flashcard_layout::{FlashcardLayout, MaxValueType, convert_values, get_max_va
 /// Amber used for non-fatal warnings, matching the imposition mode.
 const WARN_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 200, 80);
 
+/// Upper bound for manually-entered grid rows/columns. Generous enough for small
+/// cards and label sheets; the summary still warns when the grid overflows the
+/// printable area, and Card-size mode computes the grid without this cap.
+const MAX_GRID_DIM: usize = 50;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SizingMode {
     Grid,     // Specify rows/columns, card size is calculated
@@ -380,10 +385,10 @@ fn show_sizing_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
             |ui| enum_combo(ui, "fc_sizing", &mut state.sizing_mode, &sizing_modes),
         );
         grid_changed |= form_row_enabled(ui, "Rows", grid_mode, |ui| {
-            num_field(ui, &mut state.rows, 1..=10, "")
+            num_field(ui, &mut state.rows, 1..=MAX_GRID_DIM, "")
         });
         grid_changed |= form_row_enabled(ui, "Columns", grid_mode, |ui| {
-            num_field(ui, &mut state.columns, 1..=10, "")
+            num_field(ui, &mut state.columns, 1..=MAX_GRID_DIM, "")
         });
         card_changed |= form_row_enabled(ui, "Width", !grid_mode, |ui| {
             num_field(ui, &mut state.card_width, 0.0..=max, &unit)
