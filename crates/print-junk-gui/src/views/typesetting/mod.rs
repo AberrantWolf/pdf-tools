@@ -20,7 +20,7 @@ mod outline;
 use super::ViewerState;
 use crate::ui_components::{
     STANDARD_PAPER_SIZES, enum_combo, enum_selector, form, form_row, form_row_info, num_field,
-    section_heading,
+    section, section_heading,
 };
 
 /// A document imported from a URL / arXiv id / file. The raw HTML and the assets
@@ -204,23 +204,14 @@ pub fn show_typesetting(
                 ui.add_space(2.0);
 
                 source_section(ui, state, command_tx);
-                section_gap(ui);
                 page_section(ui, state);
-                section_gap(ui);
                 margins_section(ui, state);
-                section_gap(ui);
                 fonts_section(ui, state);
-                section_gap(ui);
                 headings_section(ui, state);
-                section_gap(ui);
                 spacing_section(ui, state);
-                section_gap(ui);
                 tables_section(ui, state);
-                section_gap(ui);
                 page_breaks_section(ui, state);
-                section_gap(ui);
                 document_section(ui, state);
-                section_gap(ui);
                 actions_section(ui, state, command_tx);
 
                 // Regenerate the preview once per frame, AFTER every section has
@@ -250,12 +241,6 @@ pub fn show_typesetting(
     });
 }
 
-fn section_gap(ui: &mut egui::Ui) {
-    // The brass eyebrow + rule that opens each section is the divider now, so no
-    // separate rule here — just breathing room before the next eyebrow.
-    ui.add_space(8.0);
-}
-
 // =============================================================================
 // Sections
 // =============================================================================
@@ -265,14 +250,14 @@ fn source_section(
     state: &mut TypesettingState,
     command_tx: &mpsc::UnboundedSender<PdfCommand>,
 ) {
-    section_heading(ui, "Source");
-    import_row(ui, state, command_tx);
-
-    if state.import.is_some() {
-        imported_source(ui, state, command_tx);
-    } else {
-        editable_source(ui, state);
-    }
+    section(ui, "ts_source_sec", "Source", true, |ui| {
+        import_row(ui, state, command_tx);
+        if state.import.is_some() {
+            imported_source(ui, state, command_tx);
+        } else {
+            editable_source(ui, state);
+        }
+    });
 }
 
 /// The "import a document" control: a URL/arXiv/path field plus a button, shared
@@ -513,22 +498,23 @@ fn maybe_regenerate(state: &mut TypesettingState, command_tx: &mpsc::UnboundedSe
 }
 
 fn page_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Page");
     let c = &mut state.config;
     let mut changed = false;
     let orientations = [
         (Orientation::Portrait, "Portrait"),
         (Orientation::Landscape, "Landscape"),
     ];
-    form(ui, "ts_page", |ui| {
-        changed |= form_row(ui, "Page size", |ui| {
-            enum_combo(ui, "ts_paper", &mut c.page_size, &STANDARD_PAPER_SIZES)
-        });
-        changed |= form_row(ui, "Orientation", |ui| {
-            enum_combo(ui, "ts_orientation", &mut c.orientation, &orientations)
-        });
-        changed |= form_row(ui, "Page numbers", |ui| {
-            ui.checkbox(&mut c.page_numbers, "").changed()
+    section(ui, "ts_page_sec", "Page", true, |ui| {
+        form(ui, "ts_page", |ui| {
+            changed |= form_row(ui, "Page size", |ui| {
+                enum_combo(ui, "ts_paper", &mut c.page_size, &STANDARD_PAPER_SIZES)
+            });
+            changed |= form_row(ui, "Orientation", |ui| {
+                enum_combo(ui, "ts_orientation", &mut c.orientation, &orientations)
+            });
+            changed |= form_row(ui, "Page numbers", |ui| {
+                ui.checkbox(&mut c.page_numbers, "").changed()
+            });
         });
     });
     if changed {
@@ -537,22 +523,23 @@ fn page_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn margins_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Margins");
     let m = &mut state.config;
     let mut changed = false;
     let mm = |ui: &mut egui::Ui, value: &mut f32| num_field(ui, value, 0.0..=80.0, " mm");
-    form(ui, "ts_margins", |ui| {
-        changed |= form_row(ui, "Top", |ui| mm(ui, &mut m.margin_top_mm));
-        changed |= form_row(ui, "Bottom", |ui| mm(ui, &mut m.margin_bottom_mm));
-        changed |= form_row_info(ui, "Spine", "Inner margin, at the binding edge", |ui| {
-            mm(ui, &mut m.margin_inner_mm)
+    section(ui, "ts_margins_sec", "Margins", true, |ui| {
+        form(ui, "ts_margins", |ui| {
+            changed |= form_row(ui, "Top", |ui| mm(ui, &mut m.margin_top_mm));
+            changed |= form_row(ui, "Bottom", |ui| mm(ui, &mut m.margin_bottom_mm));
+            changed |= form_row_info(ui, "Spine", "Inner margin, at the binding edge", |ui| {
+                mm(ui, &mut m.margin_inner_mm)
+            });
+            changed |= form_row_info(
+                ui,
+                "Fore-edge",
+                "Outer margin, at the front (cut) edge",
+                |ui| mm(ui, &mut m.margin_outer_mm),
+            );
         });
-        changed |= form_row_info(
-            ui,
-            "Fore-edge",
-            "Outer margin, at the front (cut) edge",
-            |ui| mm(ui, &mut m.margin_outer_mm),
-        );
     });
     if changed {
         state.needs_regeneration = true;
@@ -560,35 +547,36 @@ fn margins_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn fonts_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Body text");
     let mut changed = false;
-    form(ui, "ts_body", |ui| {
-        changed |= form_row(ui, "Font", |ui| {
-            font_combo(
-                ui,
-                "ts_body_font",
-                &mut state.config.body_font.family,
-                &state.available_fonts,
-            )
-        });
-        changed |= form_row(ui, "Size", |ui| {
-            num_field(ui, &mut state.config.body_font.size_pt, 5.0..=32.0, " pt")
-        });
-        changed |= form_row(ui, "Color", |ui| {
-            color_field(ui, &mut state.config.body_color)
-        });
-        changed |= form_row(ui, "Link color", |ui| {
-            color_field(ui, &mut state.config.link_color)
-        });
-        changed |= form_row(ui, "Code color", |ui| {
-            color_field(ui, &mut state.config.code_color)
-        });
-        changed |= form_row(ui, "Code bg", |ui| {
-            optional_color_field(
-                ui,
-                &mut state.config.code_background,
-                Color::new(244, 244, 244),
-            )
+    section(ui, "ts_body_sec", "Body text", true, |ui| {
+        form(ui, "ts_body", |ui| {
+            changed |= form_row(ui, "Font", |ui| {
+                font_combo(
+                    ui,
+                    "ts_body_font",
+                    &mut state.config.body_font.family,
+                    &state.available_fonts,
+                )
+            });
+            changed |= form_row(ui, "Size", |ui| {
+                num_field(ui, &mut state.config.body_font.size_pt, 5.0..=32.0, " pt")
+            });
+            changed |= form_row(ui, "Color", |ui| {
+                color_field(ui, &mut state.config.body_color)
+            });
+            changed |= form_row(ui, "Link color", |ui| {
+                color_field(ui, &mut state.config.link_color)
+            });
+            changed |= form_row(ui, "Code color", |ui| {
+                color_field(ui, &mut state.config.code_color)
+            });
+            changed |= form_row(ui, "Code bg", |ui| {
+                optional_color_field(
+                    ui,
+                    &mut state.config.code_background,
+                    Color::new(244, 244, 244),
+                )
+            });
         });
     });
     if changed {
@@ -599,62 +587,61 @@ fn fonts_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 /// Per-level heading editor: pick a level, then edit its style. Only the
 /// selected level's controls are shown to keep the panel compact.
 fn headings_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Headings");
-
     // Clamp first — a skipped/zeroed value on restore must not underflow below.
     state.heading_edit_level = state.heading_edit_level.clamp(1, 6);
     let mut changed = false;
-
-    ui.horizontal(|ui| {
-        for lvl in 1..=6u8 {
-            if ui
-                .selectable_label(state.heading_edit_level == lvl, format!("H{lvl}"))
-                .clicked()
-            {
-                state.heading_edit_level = lvl;
-            }
-        }
-    });
-
-    ui.add_space(2.0);
-
-    let lvl = state.heading_edit_level;
-    let available = &state.available_fonts;
-    let st = &mut state.config.heading_styles[usize::from(lvl - 1)];
     let aligns = [
         (HAlign::Left, "Left"),
         (HAlign::Center, "Center"),
         (HAlign::Right, "Right"),
     ];
 
-    form(ui, "ts_heading", |ui| {
-        changed |= form_row(ui, "Font", |ui| {
-            font_combo(ui, "ts_heading_font", &mut st.family, available)
+    section(ui, "ts_heading_sec", "Headings", false, |ui| {
+        ui.horizontal(|ui| {
+            for lvl in 1..=6u8 {
+                if ui
+                    .selectable_label(state.heading_edit_level == lvl, format!("H{lvl}"))
+                    .clicked()
+                {
+                    state.heading_edit_level = lvl;
+                }
+            }
         });
-        changed |= form_row(ui, "Size", |ui| {
-            num_field(ui, &mut st.size_pt, 6.0..=72.0, " pt")
+        ui.add_space(2.0);
+
+        let lvl = state.heading_edit_level;
+        let available = &state.available_fonts;
+        let st = &mut state.config.heading_styles[usize::from(lvl - 1)];
+
+        form(ui, "ts_heading", |ui| {
+            changed |= form_row(ui, "Font", |ui| {
+                font_combo(ui, "ts_heading_font", &mut st.family, available)
+            });
+            changed |= form_row(ui, "Size", |ui| {
+                num_field(ui, &mut st.size_pt, 6.0..=72.0, " pt")
+            });
+            changed |= form_row(ui, "Style", |ui| {
+                let mut c = ui.checkbox(&mut st.bold, "Bold").changed();
+                c |= ui.checkbox(&mut st.italic, "Italic").changed();
+                c
+            });
+            changed |= form_row(ui, "Color", |ui| color_field(ui, &mut st.color));
+            changed |= form_row(ui, "Align", |ui| {
+                enum_combo(ui, "ts_heading_align", &mut st.align, &aligns)
+            });
+            changed |= form_row(ui, "Space above", |ui| {
+                num_field(ui, &mut st.space_above_mm, 0.0..=40.0, " mm")
+            });
+            changed |= form_row(ui, "Space below", |ui| {
+                num_field(ui, &mut st.space_below_mm, 0.0..=40.0, " mm")
+            });
+            changed |= form_row_info(
+                ui,
+                "New page",
+                "Start this heading on a new page (e.g. chapters)",
+                |ui| ui.checkbox(&mut st.start_new_page, "").changed(),
+            );
         });
-        changed |= form_row(ui, "Style", |ui| {
-            let mut c = ui.checkbox(&mut st.bold, "Bold").changed();
-            c |= ui.checkbox(&mut st.italic, "Italic").changed();
-            c
-        });
-        changed |= form_row(ui, "Color", |ui| color_field(ui, &mut st.color));
-        changed |= form_row(ui, "Align", |ui| {
-            enum_combo(ui, "ts_heading_align", &mut st.align, &aligns)
-        });
-        changed |= form_row(ui, "Space above", |ui| {
-            num_field(ui, &mut st.space_above_mm, 0.0..=40.0, " mm")
-        });
-        changed |= form_row(ui, "Space below", |ui| {
-            num_field(ui, &mut st.space_below_mm, 0.0..=40.0, " mm")
-        });
-        changed |= form_row_info(
-            ui,
-            "New page",
-            "Start this heading on a new page (e.g. chapters)",
-            |ui| ui.checkbox(&mut st.start_new_page, "").changed(),
-        );
     });
 
     if changed {
@@ -663,7 +650,6 @@ fn headings_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Tables");
     let t = &mut state.config.table;
     let mut changed = false;
     let borders = [
@@ -672,27 +658,29 @@ fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
         (TableBorder::None, "None"),
     ];
 
-    form(ui, "ts_table", |ui| {
-        changed |= form_row(ui, "Bold header", |ui| {
-            ui.checkbox(&mut t.header_bold, "").changed()
-        });
-        changed |= form_row(ui, "Header fill", |ui| {
-            optional_color_field(ui, &mut t.header_fill, Color::new(230, 230, 230))
-        });
-        changed |= form_row_info(ui, "Zebra", "Shade alternating rows", |ui| {
-            optional_color_field(ui, &mut t.zebra_fill, Color::new(244, 244, 244))
-        });
-        changed |= form_row(ui, "Borders", |ui| {
-            enum_combo(ui, "ts_table_border", &mut t.border, &borders)
-        });
-        changed |= form_row(ui, "Border width", |ui| {
-            num_field(ui, &mut t.border_width_pt, 0.0..=3.0, " pt")
-        });
-        changed |= form_row(ui, "Border color", |ui| {
-            color_field(ui, &mut t.border_color)
-        });
-        changed |= form_row(ui, "Cell padding", |ui| {
-            num_field(ui, &mut t.cell_padding_mm, 0.0..=8.0, " mm")
+    section(ui, "ts_table_sec", "Tables", false, |ui| {
+        form(ui, "ts_table", |ui| {
+            changed |= form_row(ui, "Bold header", |ui| {
+                ui.checkbox(&mut t.header_bold, "").changed()
+            });
+            changed |= form_row(ui, "Header fill", |ui| {
+                optional_color_field(ui, &mut t.header_fill, Color::new(230, 230, 230))
+            });
+            changed |= form_row_info(ui, "Zebra", "Shade alternating rows", |ui| {
+                optional_color_field(ui, &mut t.zebra_fill, Color::new(244, 244, 244))
+            });
+            changed |= form_row(ui, "Borders", |ui| {
+                enum_combo(ui, "ts_table_border", &mut t.border, &borders)
+            });
+            changed |= form_row(ui, "Border width", |ui| {
+                num_field(ui, &mut t.border_width_pt, 0.0..=3.0, " pt")
+            });
+            changed |= form_row(ui, "Border color", |ui| {
+                color_field(ui, &mut t.border_color)
+            });
+            changed |= form_row(ui, "Cell padding", |ui| {
+                num_field(ui, &mut t.cell_padding_mm, 0.0..=8.0, " mm")
+            });
         });
     });
 
@@ -702,44 +690,45 @@ fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn document_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Document & front matter");
     let c = &mut state.config;
     let mut changed = false;
 
-    form(ui, "ts_doc", |ui| {
-        changed |= form_row(ui, "Title", |ui| text_field(ui, &mut c.doc_title, "(none)"));
-        changed |= form_row(ui, "Author", |ui| text_field(ui, &mut c.doc_author, ""));
-        changed |= form_row(ui, "Keywords", |ui| {
-            text_field(ui, &mut c.doc_keywords, "comma, separated")
-        });
-        changed |= form_row_info(
-            ui,
-            "Language",
-            "BCP-47 code; controls hyphenation and quotes",
-            |ui| text_field(ui, &mut c.lang, "en"),
-        );
-        changed |= form_row(ui, "Contents", |ui| {
-            ui.checkbox(&mut c.generate_toc, "").changed()
-        });
-        if c.generate_toc {
-            changed |= form_row(ui, "TOC depth", |ui| {
-                num_field(ui, &mut c.toc_depth, 1..=6, "")
+    section(ui, "ts_doc_sec", "Document & front matter", false, |ui| {
+        form(ui, "ts_doc", |ui| {
+            changed |= form_row(ui, "Title", |ui| text_field(ui, &mut c.doc_title, "(none)"));
+            changed |= form_row(ui, "Author", |ui| text_field(ui, &mut c.doc_author, ""));
+            changed |= form_row(ui, "Keywords", |ui| {
+                text_field(ui, &mut c.doc_keywords, "comma, separated")
             });
-        }
-        changed |= form_row_info(
-            ui,
-            "Smart quotes",
-            "Curly quotes and typographic dashes",
-            |ui| ui.checkbox(&mut c.smart_punctuation, "").changed(),
+            changed |= form_row_info(
+                ui,
+                "Language",
+                "BCP-47 code; controls hyphenation and quotes",
+                |ui| text_field(ui, &mut c.lang, "en"),
+            );
+            changed |= form_row(ui, "Contents", |ui| {
+                ui.checkbox(&mut c.generate_toc, "").changed()
+            });
+            if c.generate_toc {
+                changed |= form_row(ui, "TOC depth", |ui| {
+                    num_field(ui, &mut c.toc_depth, 1..=6, "")
+                });
+            }
+            changed |= form_row_info(
+                ui,
+                "Smart quotes",
+                "Curly quotes and typographic dashes",
+                |ui| ui.checkbox(&mut c.smart_punctuation, "").changed(),
+            );
+        });
+
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("A title page is added when a title is set.")
+                .small()
+                .weak(),
         );
     });
-
-    ui.add_space(2.0);
-    ui.label(
-        egui::RichText::new("A title page is added when a title is set.")
-            .small()
-            .weak(),
-    );
 
     if changed {
         state.needs_regeneration = true;
@@ -814,24 +803,25 @@ fn font_combo(ui: &mut egui::Ui, id: &str, family: &mut String, available: &[Str
 }
 
 fn spacing_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Spacing");
     let c = &mut state.config;
     let mut changed = false;
-    form(ui, "ts_spacing", |ui| {
-        changed |= form_row(ui, "Line leading", |ui| {
-            num_field(ui, &mut c.line_spacing_em, 0.0..=2.0, " em")
-        });
-        changed |= form_row(ui, "Paragraph gap", |ui| {
-            num_field(ui, &mut c.paragraph_spacing_mm, 0.0..=20.0, " mm")
-        });
-        changed |= form_row_info(ui, "Indent", "First-line paragraph indent", |ui| {
-            num_field(ui, &mut c.paragraph_indent_mm, 0.0..=30.0, " mm")
-        });
-        changed |= form_row(ui, "Justify", |ui| {
-            ui.checkbox(&mut c.justify, "").changed()
-        });
-        changed |= form_row(ui, "Hyphenate", |ui| {
-            ui.checkbox(&mut c.hyphenate, "").changed()
+    section(ui, "ts_spacing_sec", "Spacing", true, |ui| {
+        form(ui, "ts_spacing", |ui| {
+            changed |= form_row(ui, "Line leading", |ui| {
+                num_field(ui, &mut c.line_spacing_em, 0.0..=2.0, " em")
+            });
+            changed |= form_row(ui, "Paragraph gap", |ui| {
+                num_field(ui, &mut c.paragraph_spacing_mm, 0.0..=20.0, " mm")
+            });
+            changed |= form_row_info(ui, "Indent", "First-line paragraph indent", |ui| {
+                num_field(ui, &mut c.paragraph_indent_mm, 0.0..=30.0, " mm")
+            });
+            changed |= form_row(ui, "Justify", |ui| {
+                ui.checkbox(&mut c.justify, "").changed()
+            });
+            changed |= form_row(ui, "Hyphenate", |ui| {
+                ui.checkbox(&mut c.hyphenate, "").changed()
+            });
         });
     });
     if changed {
@@ -840,54 +830,55 @@ fn spacing_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn page_breaks_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
-    section_heading(ui, "Page breaks");
-    ui.label(
-        egui::RichText::new("Insert a page break at lines matching a pattern.")
-            .small()
-            .weak(),
-    );
-
     let mut changed = false;
-    let mut remove: Option<usize> = None;
     let positions = [
         (BreakPosition::After, "after"),
         (BreakPosition::Before, "before"),
         (BreakPosition::Replace, "replace"),
     ];
 
-    for (i, rule) in state.config.page_breaks.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            changed |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut rule.pattern)
-                        .desired_width(90.0)
-                        .hint_text("e.g. -----"),
-                )
-                .changed();
-            changed |= enum_selector(
-                ui,
-                &format!("ts_break_{i}"),
-                "",
-                &mut rule.position,
-                &positions,
-            );
-            if ui.button("✖").clicked() {
-                remove = Some(i);
-            }
-        });
-    }
+    section(ui, "ts_breaks_sec", "Page breaks", false, |ui| {
+        ui.label(
+            egui::RichText::new("Insert a page break at lines matching a pattern.")
+                .small()
+                .weak(),
+        );
 
-    if let Some(i) = remove {
-        state.config.page_breaks.remove(i);
-        changed = true;
-    }
-    if ui.button("➕ Add rule").clicked() {
-        state
-            .config
-            .page_breaks
-            .push(PageBreakRule::new("", BreakPosition::Replace));
-        changed = true;
-    }
+        let mut remove: Option<usize> = None;
+        for (i, rule) in state.config.page_breaks.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut rule.pattern)
+                            .desired_width(90.0)
+                            .hint_text("e.g. -----"),
+                    )
+                    .changed();
+                changed |= enum_selector(
+                    ui,
+                    &format!("ts_break_{i}"),
+                    "",
+                    &mut rule.position,
+                    &positions,
+                );
+                if ui.button("✖").clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+
+        if let Some(i) = remove {
+            state.config.page_breaks.remove(i);
+            changed = true;
+        }
+        if ui.button("➕ Add rule").clicked() {
+            state
+                .config
+                .page_breaks
+                .push(PageBreakRule::new("", BreakPosition::Replace));
+            changed = true;
+        }
+    });
 
     if changed {
         state.needs_regeneration = true;

@@ -2,28 +2,53 @@ use eframe::egui;
 use pdf_units::PaperSize;
 use std::path::PathBuf;
 
-/// A section heading for flat settings panels: a brass, uppercase "eyebrow" with
-/// a hairline rule running off to the right — a deliberately different voice from
-/// the per-control labels beneath it, so the panel's structure stays scannable.
+/// Paint the brass "eyebrow": an uppercase brass label with a hairline rule
+/// running off to the right — a deliberately different voice from the per-control
+/// labels beneath it, so the panel's structure stays scannable. Shared by the
+/// flat [`section_heading`] and the collapsible [`section`] header.
+fn eyebrow(ui: &mut egui::Ui, text: &str) {
+    let label = ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .color(crate::theme::BRASS)
+            .size(12.0),
+    );
+    // A hairline rule filling the remaining width, on the label's center line.
+    let rest = ui.available_rect_before_wrap();
+    if rest.width() > 12.0 {
+        ui.painter().hline(
+            (rest.left() + 6.0)..=rest.right(),
+            label.rect.center().y,
+            egui::Stroke::new(1.0, crate::theme::HAIRLINE),
+        );
+    }
+}
+
+/// A flat (non-collapsible) brass eyebrow section heading.
 pub fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        let label = ui.label(
-            egui::RichText::new(text.to_uppercase())
-                .color(crate::theme::BRASS)
-                .size(12.0),
-        );
-        // A hairline rule filling the remaining width, on the label's baseline.
-        let rest = ui.available_rect_before_wrap();
-        if rest.width() > 12.0 {
-            ui.painter().hline(
-                (rest.left() + 6.0)..=rest.right(),
-                label.rect.center().y,
-                egui::Stroke::new(1.0, crate::theme::HAIRLINE),
-            );
-        }
-    });
+    ui.horizontal(|ui| eyebrow(ui, text));
     ui.add_space(2.0);
+}
+
+/// A collapsible settings section whose header is the brass eyebrow — the
+/// Pressroom section voice, made foldable so dense panels stay scannable. `id`
+/// must be unique per section; `default_open` sets the initial fold state.
+pub fn section(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    default_open: bool,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
+    ui.add_space(4.0);
+    let header_id = ui.make_persistent_id(id);
+    egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        header_id,
+        default_open,
+    )
+    .show_header(ui, |ui| eyebrow(ui, title))
+    .body(|ui| contents(ui));
 }
 
 /// A two-column "label : control" settings form. The label column auto-sizes to
