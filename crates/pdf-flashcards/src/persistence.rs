@@ -127,9 +127,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn layout_saved_before_duplex_existed_still_loads() {
-        // A layout JSON without the `duplex` field must deserialize (serde
-        // default), keeping old saved files working.
+    async fn layout_saved_before_duplex_and_split_fonts_still_loads() {
+        // A legacy layout JSON predates both the `duplex` field and per-side font
+        // sizes: it must deserialize (serde defaults), its single `font_size_pt`
+        // mapping onto the front size and the back falling back to the default.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("old_layout.json");
         let legacy = r#"{
@@ -139,12 +140,17 @@ mod tests {
             "card_width_mm": 60, "card_height_mm": 90,
             "rows": 2, "columns": 2,
             "row_spacing_mm": 5, "column_spacing_mm": 5,
-            "font_size_pt": 12
+            "font_size_pt": 18
         }"#;
         tokio::fs::write(&path, legacy).await.unwrap();
 
         match load_flashcard_file(&path).await.unwrap() {
-            LoadedFile::Layout(o) => assert_eq!(o.duplex, crate::options::Duplex::LongEdge),
+            LoadedFile::Layout(o) => {
+                assert_eq!(o.duplex, crate::options::Duplex::LongEdge);
+                assert!((o.front_font_size_pt - 18.0).abs() < f32::EPSILON);
+                let default_back = FlashcardOptions::default().back_font_size_pt;
+                assert!((o.back_font_size_pt - default_back).abs() < f32::EPSILON);
+            }
             LoadedFile::Deck(_) => panic!("expected a layout"),
         }
     }

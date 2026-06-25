@@ -20,9 +20,21 @@ const STARTUP_KEY: &str = "print_junk_startup";
 const PROJECT_KEY: &str = "print_junk_project";
 
 /// eframe storage key for the path of the `.pjproj` file this session is editing
-/// (so Cmd+S re-saves it and the save dialog defaults to its name).
+/// (so Save re-saves it and the save dialog defaults to its name).
 #[cfg(not(target_arch = "wasm32"))]
 const CURRENT_PROJECT_KEY: &str = "print_junk_current_project";
+
+/// Save: re-save the open project (or prompt if none). ⌘S / Ctrl+S.
+#[cfg(not(target_arch = "wasm32"))]
+const SAVE_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
+
+/// Save As: always prompt for a path. ⇧⌘S / Ctrl+Shift+S.
+#[cfg(not(target_arch = "wasm32"))]
+const SAVE_AS_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    egui::Key::S,
+);
 
 #[derive(Clone)]
 struct ProgressState {
@@ -353,11 +365,14 @@ impl eframe::App for PrintJunkApp {
             }
         }
 
-        // Global keyboard shortcuts: Cmd+O (open), Cmd+S (save)
+        // Global keyboard shortcuts: Cmd+O (open), Cmd+S (Save), Cmd+Shift+S
+        // (Save As). Consuming the save shortcuts here matches them exactly, so
+        // Cmd+S and Cmd+Shift+S never both fire on one press.
         #[cfg(not(target_arch = "wasm32"))]
         {
             let cmd_o = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O));
-            let cmd_s = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S));
+            let save = ctx.input_mut(|i| i.consume_shortcut(&SAVE_SHORTCUT));
+            let save_as = ctx.input_mut(|i| i.consume_shortcut(&SAVE_AS_SHORTCUT));
 
             if cmd_o {
                 match self.mode {
@@ -401,11 +416,14 @@ impl eframe::App for PrintJunkApp {
                 }
             }
 
-            // Cmd+S saves the project (PDF export lives on each mode's
-            // "Save PDF…" button). Saves in place when a project file is open,
-            // otherwise prompts.
-            if cmd_s {
+            // Save re-saves the open project in place (or prompts if none);
+            // Save As always prompts. PDF export lives on each mode's "Save PDF…"
+            // button, separate from the project file.
+            if save {
                 self.save_project();
+            }
+            if save_as {
+                self.save_project_dialog();
             }
         }
 
@@ -778,14 +796,24 @@ impl eframe::App for PrintJunkApp {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.menu_button("☰", |ui| {
-                    if ui.button("Show Startup Selector").clicked() {
+                    // Every item carries a leading emoji so the labels line up in
+                    // a column (equal-width icon gutter), not ragged at the left.
+                    if ui.button("🏠 Show Startup Selector").clicked() {
                         self.show_startup = true;
                         ui.close();
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         ui.separator();
-                        if ui.button("💾 Save Project…").clicked() {
+                        let save = egui::Button::new("💾 Save")
+                            .shortcut_text(ui.ctx().format_shortcut(&SAVE_SHORTCUT));
+                        if ui.add(save).clicked() {
+                            self.save_project();
+                            ui.close();
+                        }
+                        let save_as = egui::Button::new("📄 Save As…")
+                            .shortcut_text(ui.ctx().format_shortcut(&SAVE_AS_SHORTCUT));
+                        if ui.add(save_as).clicked() {
                             self.save_project_dialog();
                             ui.close();
                         }
@@ -793,7 +821,7 @@ impl eframe::App for PrintJunkApp {
                             self.open_project_dialog();
                             ui.close();
                         }
-                        ui.menu_button("Recent Projects", |ui| {
+                        ui.menu_button("🕘 Recent Projects", |ui| {
                             if self.startup.recent_projects.is_empty() {
                                 ui.label("(none)");
                             }
@@ -802,7 +830,7 @@ impl eframe::App for PrintJunkApp {
                                     || path.display().to_string(),
                                     |n| n.to_string_lossy().into_owned(),
                                 );
-                                if ui.button(label).clicked() {
+                                if ui.button(format!("📄 {label}")).clicked() {
                                     pending_open = Some(path.clone());
                                     ui.close();
                                 }

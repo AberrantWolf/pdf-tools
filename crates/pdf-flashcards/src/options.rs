@@ -63,11 +63,25 @@ pub struct FlashcardOptions {
     pub columns: usize,
     pub row_spacing_mm: f32,
     pub column_spacing_mm: f32,
-    pub font_size_pt: f32,
+    /// Base font size (pt) for card fronts: the headword renders at this size and
+    /// detail lines / the shrink-to-fit pass scale down from it. The `font_size_pt`
+    /// alias keeps layouts saved before fronts and backs were sized independently
+    /// loading (their single size becomes the front size).
+    #[serde(alias = "font_size_pt")]
+    pub front_font_size_pt: f32,
+    /// Base font size (pt) for card backs. Defaults to the historical single-size
+    /// value so older layouts/decks without it still load.
+    #[serde(default = "default_font_size_pt")]
+    pub back_font_size_pt: f32,
     /// Two-sided printing / flip mode. Defaults to long-edge for backward
     /// compatibility with layouts/decks saved before this field existed.
     #[serde(default)]
     pub duplex: Duplex,
+}
+
+/// The historical single flashcard font size (pt), now the default for each side.
+fn default_font_size_pt() -> f32 {
+    12.0
 }
 
 impl Default for FlashcardOptions {
@@ -85,7 +99,8 @@ impl Default for FlashcardOptions {
             columns: 3,
             row_spacing_mm: 5.0,
             column_spacing_mm: 5.0,
-            font_size_pt: 12.0,
+            front_font_size_pt: default_font_size_pt(),
+            back_font_size_pt: default_font_size_pt(),
             duplex: Duplex::LongEdge,
         }
     }
@@ -105,8 +120,15 @@ impl FlashcardOptions {
         if self.card_height_mm <= 0.0 {
             return Err(FlashcardError::Pdf("card height must be positive".into()));
         }
-        if self.font_size_pt <= 0.0 {
-            return Err(FlashcardError::Pdf("font size must be positive".into()));
+        if self.front_font_size_pt <= 0.0 {
+            return Err(FlashcardError::Pdf(
+                "front font size must be positive".into(),
+            ));
+        }
+        if self.back_font_size_pt <= 0.0 {
+            return Err(FlashcardError::Pdf(
+                "back font size must be positive".into(),
+            ));
         }
         if self.page_width_mm <= 0.0 || self.page_height_mm <= 0.0 {
             return Err(FlashcardError::Pdf(

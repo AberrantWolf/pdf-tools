@@ -75,7 +75,11 @@ pub struct FlashcardState {
     pub row_spacing: f32,
     pub column_spacing: f32,
 
-    pub font_size_pt: f32,
+    // Base font sizes (pt) for the card front and back. The `font_size_pt` alias
+    // loads projects saved before the two were sized independently.
+    #[serde(alias = "font_size_pt")]
+    pub front_font_size_pt: f32,
+    pub back_font_size_pt: f32,
 
     // Two-sided printing / flip mode.
     pub duplex: Duplex,
@@ -119,7 +123,8 @@ impl Default for FlashcardState {
             columns: 3,
             row_spacing: 0.2,
             column_spacing: 0.2,
-            font_size_pt: 12.0,
+            front_font_size_pt: 12.0,
+            back_font_size_pt: 12.0,
             duplex: Duplex::LongEdge,
             cards: Vec::new(),
             load_warnings: Vec::new(),
@@ -166,7 +171,8 @@ impl FlashcardState {
             columns: self.columns,
             row_spacing_mm: self.measurement_system.to_mm(self.row_spacing),
             column_spacing_mm: self.measurement_system.to_mm(self.column_spacing),
-            font_size_pt: self.font_size_pt,
+            front_font_size_pt: self.front_font_size_pt,
+            back_font_size_pt: self.back_font_size_pt,
             duplex: self.duplex,
         }
     }
@@ -188,7 +194,8 @@ impl FlashcardState {
         self.columns = options.columns;
         self.row_spacing = sys.from_mm(options.row_spacing_mm);
         self.column_spacing = sys.from_mm(options.column_spacing_mm);
-        self.font_size_pt = options.font_size_pt;
+        self.front_font_size_pt = options.front_font_size_pt;
+        self.back_font_size_pt = options.back_font_size_pt;
         self.duplex = options.duplex;
     }
 
@@ -555,9 +562,14 @@ fn show_spacing_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
 
 fn show_font_section(ui: &mut egui::Ui, state: &mut FlashcardState) {
     let mut changed = false;
+    let two_sided = state.duplex != Duplex::OneSided;
     form(ui, "fc_font", |ui| {
-        changed |= form_row(ui, "Font size", |ui| {
-            num_field(ui, &mut state.font_size_pt, 6.0..=36.0, " pt")
+        changed |= form_row(ui, "Front size", |ui| {
+            num_field(ui, &mut state.front_font_size_pt, 6.0..=36.0, " pt")
+        });
+        // Backs aren't printed when one-sided, so dim their size there.
+        changed |= form_row_enabled(ui, "Back size", two_sided, |ui| {
+            num_field(ui, &mut state.back_font_size_pt, 6.0..=36.0, " pt")
         });
     });
     if changed {

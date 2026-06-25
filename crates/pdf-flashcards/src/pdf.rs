@@ -353,19 +353,21 @@ fn layout_side(
 }
 
 /// Append PDF text operators that draw `text` as a multi-line block, centred in
-/// the card cell whose bottom-left corner is `(cell_x, cell_y)` (mm).
+/// the card cell whose bottom-left corner is `(cell_x, cell_y)` (mm). The
+/// headword is laid out at `base_size_pt` (fronts and backs can differ).
 fn draw_card_text(
     ops: &mut String,
     text: &str,
     face: &ttf_parser::Face<'_>,
     options: &FlashcardOptions,
+    base_size_pt: f32,
     cell_x: f32,
     cell_y: f32,
 ) {
     let lines = layout_side(
         text,
         face,
-        options.font_size_pt,
+        base_size_pt,
         options.card_width_mm,
         options.card_height_mm,
     );
@@ -471,13 +473,22 @@ fn generate_flashcard_pdf_bytes(
                 &card.front,
                 &face,
                 options,
+                options.front_font_size_pt,
                 front_x,
                 front_y,
             );
 
             if double_sided {
                 let (back_x, back_y) = back_cell_origin(options, front_x, front_y);
-                draw_card_text(&mut back_ops, &card.back, &face, options, back_x, back_y);
+                draw_card_text(
+                    &mut back_ops,
+                    &card.back,
+                    &face,
+                    options,
+                    options.back_font_size_pt,
+                    back_x,
+                    back_y,
+                );
             }
         }
 

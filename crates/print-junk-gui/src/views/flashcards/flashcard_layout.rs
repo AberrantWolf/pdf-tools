@@ -84,7 +84,9 @@ impl FlashcardLayout {
             columns: self.columns,
             row_spacing_mm: self.measurement_system.to_mm(self.row_spacing),
             column_spacing_mm: self.measurement_system.to_mm(self.column_spacing),
-            font_size_pt: 12.0,        // Default, will be overridden
+            // Font sizes don't affect grid sizing; the real values come from the UI.
+            front_font_size_pt: 12.0,
+            back_font_size_pt: 12.0,
             duplex: Duplex::default(), // Does not affect grid sizing.
         }
     }
