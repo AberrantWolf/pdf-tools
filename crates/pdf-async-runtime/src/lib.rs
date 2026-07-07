@@ -112,11 +112,13 @@ pub enum PdfCommand {
         source: String,
         config: TypesetConfig,
     },
-    /// Re-convert a previously-imported document from its cached raw HTML and
-    /// assets (offline, on restore), then compile a preview (desktop-only).
+    /// Re-convert a previously-imported document from its cached raw payload and
+    /// assets (offline, on restore), then compile a preview (desktop-only). `kind`
+    /// selects the importer (HTML vs Markdown) the payload feeds.
     #[cfg(not(target_arch = "wasm32"))]
     TypesetReconvert {
-        html: std::sync::Arc<String>,
+        payload: std::sync::Arc<String>,
+        kind: InputFormat,
         raw_assets: SharedAssets,
         overrides: SectionOverrides,
         config: TypesetConfig,
@@ -238,14 +240,16 @@ pub enum PdfUpdate {
         path: PathBuf,
     },
     /// A document import finished: a preview is ready, along with the raw payload
-    /// to persist (`source`/`html`/`raw_assets`) and the converted artifact to
-    /// cache in-memory for cheap recompiles (`body`/`assets`) (desktop-only).
+    /// to persist (`source`/`payload`/`kind`/`raw_assets`) and the converted
+    /// artifact to cache in-memory for cheap recompiles (`body`/`assets`)
+    /// (desktop-only).
     #[cfg(not(target_arch = "wasm32"))]
     TypesetImported {
         pdf_bytes: Vec<u8>,
         page_count: usize,
         source: String,
-        html: std::sync::Arc<String>,
+        payload: std::sync::Arc<String>,
+        kind: InputFormat,
         raw_assets: SharedAssets,
         body: std::sync::Arc<String>,
         assets: SharedAssets,

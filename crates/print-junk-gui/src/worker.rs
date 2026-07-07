@@ -235,13 +235,16 @@ async fn process_command(
         }
         #[cfg(not(target_arch = "wasm32"))]
         PdfCommand::TypesetReconvert {
-            html,
+            payload,
+            kind,
             raw_assets,
             overrides,
             config,
         } => {
-            handlers::typesetting::handle_reconvert(html, raw_assets, overrides, config, update_tx)
-                .await;
+            handlers::typesetting::handle_reconvert(
+                payload, kind, raw_assets, overrides, config, update_tx,
+            )
+            .await;
         }
         #[cfg(not(target_arch = "wasm32"))]
         PdfCommand::TypesetCompileImported {

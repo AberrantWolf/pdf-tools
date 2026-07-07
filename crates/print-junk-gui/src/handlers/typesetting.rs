@@ -5,12 +5,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pdf_async_runtime::{
-    PdfUpdate, SectionOverrides, SharedAssets, SharedOutline, TypesetConfig, TypesetInput,
+    InputFormat, PdfUpdate, SectionOverrides, SharedAssets, SharedOutline, TypesetConfig,
+    TypesetInput,
 };
 use tokio::sync::mpsc;
 
 fn count_pdf_pages(bytes: &[u8]) -> usize {
     lopdf::Document::load_mem(bytes).map_or(0, |doc| doc.get_pages().len())
+}
+
+/// Convert a raw import payload with the importer its `kind` selects. `smart`
+/// applies only to Markdown (typographic dashes/ellipses); HTML ignores it.
+fn convert(
+    kind: InputFormat,
+    payload: &str,
+    resolver: &dyn pdf_typeset::AssetResolver,
+    smart: bool,
+) -> pdf_typeset::ImportedDoc {
+    match kind {
+        InputFormat::Markdown => pdf_typeset::import_markdown(payload, resolver, smart),
+        _ => pdf_typeset::import_html(payload, resolver),
+    }
 }
 
 fn send_error(update_tx: &mpsc::UnboundedSender<PdfUpdate>, message: String) {
@@ -65,7 +80,12 @@ pub async fn handle_import(
         let imported = pdf_import::fetch(&source).map_err(|e| format!("Import failed: {e}"))?;
         // Capture the assets the importer fetches so they can be cached offline.
         let cap = pdf_typeset::CapturingResolver::new(&imported);
-        let doc = pdf_typeset::import_html(&imported.html, &cap);
+        let doc = convert(
+            imported.kind,
+            &imported.payload,
+            &cap,
+            config.smart_punctuation,
+        );
         let raw_assets = cap.into_assets();
         // The import emits content only; the extracted title seeds the template's
         // title page unless the user already chose one. The UI mirrors this same
@@ -79,16 +99,25 @@ pub async fn handle_import(
             .map_err(|e| format!("Typesetting failed: {e}"))?;
         // Read after conversion — figure upgrades are counted as they resolve.
         let asset_report = imported.asset_report();
-        Ok((source, imported.html, raw_assets, doc, pdf, asset_report))
+        Ok((
+            source,
+            imported.kind,
+            imported.payload,
+            raw_assets,
+            doc,
+            pdf,
+            asset_report,
+        ))
     });
     match task.await {
-        Ok(Ok((source, html, raw_assets, doc, pdf_bytes, asset_report))) => {
+        Ok(Ok((source, kind, payload, raw_assets, doc, pdf_bytes, asset_report))) => {
             let page_count = count_pdf_pages(&pdf_bytes);
             let _ = update_tx.send(PdfUpdate::TypesetImported {
                 pdf_bytes,
                 page_count,
                 source,
-                html: Arc::new(html),
+                payload: Arc::new(payload),
+                kind,
                 raw_assets: Arc::new(raw_assets),
                 body: Arc::new(doc.body),
                 assets: Arc::new(doc.assets),
@@ -107,7 +136,8 @@ pub async fn handle_import(
 /// preview — the restore path, which also refreshes the in-memory converted cache.
 /// The session's saved section `overrides` are applied to the compile.
 pub async fn handle_reconvert(
-    html: Arc<String>,
+    payload: Arc<String>,
+    kind: InputFormat,
     raw_assets: SharedAssets,
     overrides: SectionOverrides,
     config: TypesetConfig,
@@ -115,7 +145,7 @@ pub async fn handle_reconvert(
 ) {
     let task = tokio::task::spawn_blocking(move || -> Result<_, String> {
         let resolver = pdf_typeset::MapResolver::new(raw_assets.iter().cloned());
-        let doc = pdf_typeset::import_html(&html, &resolver);
+        let doc = convert(kind, &payload, &resolver, config.smart_punctuation);
         let assembled = pdf_typeset::assemble_body(&doc.body, &doc.outline, &overrides);
         let pdf = pdf_typeset::compile_body(&assembled, &doc.assets, &config)
             .map_err(|e| format!("Typesetting failed: {e}"))?;

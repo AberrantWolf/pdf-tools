@@ -1,12 +1,16 @@
 //! Convert source input (Plaintext / Markdown / HTML) into Typst body markup,
 //! applying user page-break rules first.
 
+use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+use crate::asset::AssetRegistry;
 use crate::config::{BreakPosition, InputFormat, PageBreakRule, TypesetInput};
+use crate::outline::{OutlineEntry, SECTION_MARK, strip_markers};
 use crate::typst_table::{Align, Cell, Table as TypstTable};
+use crate::{AssetResolver, ImportStats, ImportedDoc, NoAssets};
 
 /// Characters that carry markup meaning in Typst and must be backslash-escaped
 /// when emitting literal text. Brackets are included so literal `[`/`]` don't
@@ -85,12 +89,27 @@ fn push_line(pages: &mut [String], line: &str) {
 pub(crate) fn escape_inline(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
+        // Never let source text forge an importer section marker.
+        if ch == SECTION_MARK {
+            continue;
+        }
         if INLINE_SPECIALS.contains(&ch) {
             out.push('\\');
         }
         out.push(ch);
     }
     out
+}
+
+/// Drop [`SECTION_MARK`] from text emitted verbatim (code blocks), so raw source
+/// can never counterfeit a section marker the way [`escape_inline`] guards
+/// escaped text.
+fn strip_section_mark(s: &str) -> Cow<'_, str> {
+    if s.contains(SECTION_MARK) {
+        Cow::Owned(s.chars().filter(|&c| c != SECTION_MARK).collect())
+    } else {
+        Cow::Borrowed(s)
+    }
 }
 
 /// Escape one plaintext line: inline specials everywhere, plus a leading numbered
@@ -149,7 +168,78 @@ fn heading_level_num(level: HeadingLevel) -> usize {
     }
 }
 
-fn markdown_to_typst(md: &str, smart: bool) -> String {
+/// Streaming state for one Markdown conversion. The editable path uses a
+/// non-recording context ([`NoAssets`], no outline); [`import_markdown`] uses a
+/// recording one so headings become [`OutlineEntry`]s and images are resolved.
+struct MdCtx<'r> {
+    assets: AssetRegistry<'r>,
+    /// `Some` while recording a document outline: each heading is wrapped in
+    /// [`SECTION_MARK`]s and pushed here. `None` for the editable path, which
+    /// emits plain headings and no markers (byte-identical to before).
+    outline: Option<Vec<OutlineEntry>>,
+    /// While a heading is open under a recording context: its entry index and a
+    /// plain-text accumulator for the entry title.
+    heading: Option<(usize, String)>,
+    /// While a resolved image is open: drop its alt-text run.
+    in_image: bool,
+}
+
+impl<'r> MdCtx<'r> {
+    fn new(resolver: &'r dyn AssetResolver, record: bool) -> Self {
+        Self {
+            assets: AssetRegistry::new(resolver),
+            outline: record.then(Vec::new),
+            heading: None,
+            in_image: false,
+        }
+    }
+
+    /// Open a heading: plant a section marker and begin recording its title when
+    /// this context records an outline, else emit a plain `= ` heading.
+    fn start_heading(&mut self, out: &mut String, level: HeadingLevel) {
+        let depth = heading_level_num(level);
+        out.push('\n');
+        if let Some(outline) = &mut self.outline {
+            let idx = outline.len();
+            outline.push(OutlineEntry {
+                id: format!("md-{idx}"),
+                level: u8::try_from(depth).unwrap_or(u8::MAX),
+                title: String::new(),
+                offset: 0, // filled in by strip_markers
+            });
+            out.push(SECTION_MARK);
+            let _ = write!(out, "{idx}");
+            out.push(SECTION_MARK);
+            self.heading = Some((idx, String::new()));
+        }
+        for _ in 0..depth {
+            out.push('=');
+        }
+        out.push(' ');
+    }
+
+    /// Close a heading: store the accumulated plain text on its outline entry.
+    fn end_heading(&mut self, out: &mut String) {
+        if let Some((idx, title)) = self.heading.take()
+            && let Some(outline) = self.outline.as_mut()
+            && let Some(entry) = outline.get_mut(idx)
+        {
+            entry.title = title.trim().to_string();
+        }
+        out.push_str("\n\n");
+    }
+
+    /// Record heading title text while a heading is open (ignored otherwise).
+    fn note_heading_text(&mut self, text: &str) {
+        if let Some((_, title)) = &mut self.heading {
+            title.push_str(text);
+        }
+    }
+}
+
+/// Drive the Markdown parser into Typst markup through `ctx`. Shared by the
+/// editable text path (via [`markdown_to_typst`]) and [`import_markdown`].
+fn markdown_events(md: &str, smart: bool, ctx: &mut MdCtx) -> String {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
@@ -179,18 +269,19 @@ fn markdown_to_typst(md: &str, smart: bool) -> String {
             }
         }
 
+        // Drop the alt-text run of a successfully-resolved image.
+        if ctx.in_image {
+            if matches!(event, Event::End(TagEnd::Image)) {
+                ctx.in_image = false;
+            }
+            continue;
+        }
+
         match event {
             Event::Start(Tag::Table(aligns)) => table = Some(TableBuilder::new(aligns)),
-            Event::Start(Tag::Heading { level, .. }) => {
-                out.push('\n');
-                for _ in 0..heading_level_num(level) {
-                    out.push('=');
-                }
-                out.push(' ');
-            }
-            Event::End(TagEnd::Heading(_) | TagEnd::Paragraph) => {
-                out.push_str("\n\n");
-            }
+            Event::Start(Tag::Heading { level, .. }) => ctx.start_heading(&mut out, level),
+            Event::End(TagEnd::Heading(_)) => ctx.end_heading(&mut out),
+            Event::End(TagEnd::Paragraph) => out.push_str("\n\n"),
 
             Event::Start(Tag::Emphasis) | Event::End(TagEnd::Emphasis) => out.push('_'),
             Event::Start(Tag::Strong) | Event::End(TagEnd::Strong) => out.push('*'),
@@ -236,25 +327,36 @@ fn markdown_to_typst(md: &str, smart: bool) -> String {
                 }
             }
 
+            // A resolvable image becomes a Typst `image()`; its alt-text run is
+            // then dropped. An unresolvable one falls through to its alt text (the
+            // only behavior available on the editable, asset-less path).
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                if let Some(name) = ctx.assets.image(&dest_url) {
+                    let _ = write!(out, "#box(image(\"{name}\"))");
+                    ctx.in_image = true;
+                }
+            }
+
             Event::Start(Tag::Link { dest_url, .. }) => {
                 let _ = write!(out, "#link(\"{}\")[", escape_url(&dest_url));
             }
             // Close both inline wrappers (strikethrough and links) with `]`.
-            // Images can't be resolved from an in-memory compile, so their alt
-            // text falls through to normal text via the catch-all.
             Event::End(TagEnd::Strikethrough | TagEnd::Link) => out.push(']'),
 
             Event::Text(t) => {
+                let t = strip_section_mark(&t);
                 if in_code_block {
                     out.push_str(&t);
                 } else {
                     out.push_str(&escape_inline(&t));
                 }
+                ctx.note_heading_text(&t);
             }
             Event::Code(t) => {
                 out.push('`');
                 out.push_str(&t);
                 out.push('`');
+                ctx.note_heading_text(&t);
             }
             Event::SoftBreak => out.push(' '),
             Event::HardBreak => out.push_str(" \\\n"),
@@ -264,6 +366,56 @@ fn markdown_to_typst(md: &str, smart: bool) -> String {
         }
     }
     out
+}
+
+/// Convert Markdown for the editable text path: no assets, no recorded outline —
+/// byte-identical to the pre-import behavior.
+fn markdown_to_typst(md: &str, smart: bool) -> String {
+    let mut ctx = MdCtx::new(&NoAssets, false);
+    markdown_events(md, smart, &mut ctx)
+}
+
+/// Convert a Markdown document into a typesettable [`ImportedDoc`] — the Markdown
+/// counterpart to [`crate::import_html`]. Images are fetched through `resolver`
+/// (relative paths resolve against the source file's directory when it is a
+/// local-file resolver), and every heading becomes an [`OutlineEntry`] driving
+/// per-section overrides. Front matter (title page, table of contents) stays
+/// template-owned, so no title is extracted from the body.
+pub fn import_markdown(md: &str, resolver: &dyn AssetResolver, smart: bool) -> ImportedDoc {
+    let mut ctx = MdCtx::new(resolver, true);
+    let raw = markdown_events(md, smart, &mut ctx);
+    let mut outline = ctx.outline.take().unwrap_or_default();
+    let mut body = strip_markers(&raw, &mut outline);
+
+    // A document that opens with a heading carries a leading newline, which would
+    // push the first heading past offset 0 and fake a "front matter" section.
+    // Trim it and shift the recorded offsets to match.
+    let shift = body.len() - body.trim_start().len();
+    if shift > 0 {
+        body = body[shift..].to_string();
+        for entry in &mut outline {
+            entry.offset = entry.offset.saturating_sub(shift);
+        }
+    }
+
+    let stats = ImportStats {
+        images_ok: ctx.assets.ok,
+        images_failed: ctx.assets.failed,
+        ..ImportStats::default()
+    };
+    log::info!(
+        "imported markdown: images {} ok / {} failed, {} headings",
+        stats.images_ok,
+        stats.images_failed,
+        outline.len()
+    );
+    ImportedDoc {
+        body,
+        assets: ctx.assets.into_assets(),
+        outline,
+        title: None,
+        stats,
+    }
 }
 
 fn escape_url(url: &str) -> String {
@@ -479,5 +631,80 @@ mod tests {
         let plain = markdown_to_typst("a -- b", false);
         let smart = markdown_to_typst("a -- b", true);
         assert_ne!(plain, smart, "smart punctuation should change the output");
+    }
+
+    /// A one-image resolver, like the HTML importer's fixtures.
+    struct OneImage;
+    impl AssetResolver for OneImage {
+        fn fetch(&self, src: &str) -> Option<Vec<u8>> {
+            (src == "fig.png").then(|| b"PNGDATA".to_vec())
+        }
+    }
+
+    #[test]
+    fn import_markdown_resolves_relative_image_and_drops_alt() {
+        let doc = import_markdown("![a caption](fig.png)\n", &OneImage, false);
+        assert_eq!(doc.stats.images_ok, 1);
+        assert!(
+            doc.body.contains("#box(image(\"img-"),
+            "image emitted: {}",
+            doc.body
+        );
+        // The alt text is replaced by the image, not kept alongside it.
+        assert!(!doc.body.contains("a caption"), "alt dropped: {}", doc.body);
+        assert_eq!(doc.assets.len(), 1);
+    }
+
+    #[test]
+    fn import_markdown_unresolved_image_keeps_alt() {
+        let doc = import_markdown("![missing fig](none.png)\n", &NoAssets, false);
+        assert_eq!(doc.stats.images_failed, 1);
+        assert_eq!(doc.stats.images_ok, 0);
+        assert!(doc.body.contains("missing fig"), "alt kept: {}", doc.body);
+    }
+
+    /// Headings become outline entries whose offsets point at their `=` markup,
+    /// no title is extracted (front matter stays template-owned), and a
+    /// heading-first document has no phantom leading front matter.
+    #[test]
+    fn import_markdown_records_outline_offsets() {
+        let doc = import_markdown("# Intro\n\ntext\n\n## Details\n\nmore\n", &NoAssets, false);
+        assert!(doc.title.is_none(), "no title extracted");
+        assert_eq!(doc.outline.len(), 2);
+        assert_eq!(
+            (doc.outline[0].level, doc.outline[0].title.as_str()),
+            (1, "Intro")
+        );
+        assert_eq!(
+            (doc.outline[1].level, doc.outline[1].title.as_str()),
+            (2, "Details")
+        );
+        assert_eq!(doc.outline[0].offset, 0, "no phantom front matter");
+        assert!(doc.body[doc.outline[0].offset..].starts_with("= Intro"));
+        assert!(doc.body[doc.outline[1].offset..].starts_with("== Details"));
+        assert!(!doc.body.contains('\u{E000}'), "markers stripped");
+    }
+
+    #[test]
+    fn import_markdown_heading_title_ignores_inline_markup() {
+        let doc = import_markdown("## The *fast* `path`\n", &NoAssets, false);
+        assert_eq!(doc.outline.len(), 1);
+        assert_eq!(doc.outline[0].title, "The fast path");
+        // The body heading keeps the emphasis/raw markup.
+        assert!(
+            doc.body.contains("== The _fast_ `path`"),
+            "body markup: {}",
+            doc.body
+        );
+    }
+
+    /// Front matter before the first heading is preserved with a non-zero first
+    /// offset, so the rail can offer a "front matter" row.
+    #[test]
+    fn import_markdown_keeps_front_matter_before_first_heading() {
+        let doc = import_markdown("A preamble paragraph.\n\n# One\n", &NoAssets, false);
+        assert_eq!(doc.outline.len(), 1);
+        assert!(doc.outline[0].offset > 0, "front matter precedes heading");
+        assert!(doc.body.starts_with("A preamble paragraph."));
     }
 }

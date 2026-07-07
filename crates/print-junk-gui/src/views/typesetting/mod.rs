@@ -32,8 +32,14 @@ use crate::ui_components::{
 pub struct ImportSession {
     /// What the user imported (URL / arXiv id / path) — shown and re-importable.
     pub source: String,
-    /// The fetched HTML, re-converted on restore.
-    pub html: String,
+    /// The fetched raw payload (HTML or Markdown per [`ImportSession::kind`]),
+    /// re-converted on restore.
+    #[serde(alias = "html")]
+    pub payload: String,
+    /// Which importer the payload feeds. Defaults to HTML so pre-`kind` saves
+    /// (all of which were URL/arXiv HTML imports) restore correctly.
+    #[serde(default = "default_import_kind")]
+    pub kind: InputFormat,
     /// Assets fetched during conversion, keyed by `<img src>` (base64 in the save).
     #[serde(with = "asset_base64")]
     pub raw_assets: Vec<(String, Vec<u8>)>,
@@ -50,6 +56,12 @@ pub struct ImportSession {
     /// every frame while the worker is busy.
     #[serde(skip)]
     pub reconvert_requested: bool,
+}
+
+/// Back-compat default for [`ImportSession::kind`]: saves written before the
+/// field existed were all HTML (URL/arXiv) imports.
+fn default_import_kind() -> InputFormat {
+    InputFormat::Html
 }
 
 /// The converted, ready-to-compile form of an import, cached in memory. `Arc`s
@@ -162,31 +174,61 @@ impl TypesettingState {
         }
     }
 
-    /// Prompt for a source file and load it, detecting the format from the
-    /// extension. Shared by the "Open..." button and the Cmd+O shortcut.
-    pub fn open_file_dialog(&mut self) {
+    /// Prompt for a source file and load it. Shared by the "Open..." button and
+    /// the Cmd+O shortcut.
+    pub fn open_file_dialog(&mut self, command_tx: &mpsc::UnboundedSender<PdfCommand>) {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter(
                 "Text documents",
-                &["md", "markdown", "txt", "text", "html", "htm"],
+                &[
+                    "md", "markdown", "mdown", "mkd", "txt", "text", "html", "htm", "xhtml",
+                ],
             )
             .pick_file()
         {
-            match std::fs::read_to_string(&path) {
+            self.load_source_file(path, command_tx);
+        }
+    }
+
+    /// Load a source file by extension. Markdown/HTML documents are *imported*
+    /// (read-only, with resolved images and the Structure rail), exactly like a
+    /// URL/arXiv import; plain text stays editable. Shared by the Open dialog, the
+    /// Open button, and drag-and-drop.
+    pub fn load_source_file(
+        &mut self,
+        path: PathBuf,
+        command_tx: &mpsc::UnboundedSender<PdfCommand>,
+    ) {
+        let fmt = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(InputFormat::from_extension);
+        match fmt {
+            Some(InputFormat::Markdown | InputFormat::Html) => {
+                // Route through the import pipeline. Clearing the editable buffer
+                // stops `maybe_regenerate` from firing a stale text preview while
+                // the import is in flight.
+                self.source_text.clear();
+                self.source_path = Some(path.clone());
+                self.importing = true;
+                self.import_error = None;
+                let _ = command_tx.send(PdfCommand::TypesetImport {
+                    source: path.to_string_lossy().into_owned(),
+                    config: self.config.clone(),
+                });
+            }
+            _ => match std::fs::read_to_string(&path) {
                 Ok(text) => {
-                    if let Some(fmt) = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .and_then(InputFormat::from_extension)
-                    {
-                        self.format = fmt;
+                    if let Some(f) = fmt {
+                        self.format = f;
                     }
+                    self.import = None;
                     self.source_text = text;
                     self.source_path = Some(path);
                     self.needs_regeneration = true;
                 }
                 Err(e) => log::error!("Failed to read {}: {e}", path.display()),
-            }
+            },
         }
     }
 }
@@ -255,7 +297,7 @@ fn source_section(
         if state.import.is_some() {
             imported_source(ui, state, command_tx);
         } else {
-            editable_source(ui, state);
+            editable_source(ui, state, command_tx);
         }
     });
 }
@@ -308,46 +350,75 @@ fn imported_source(
 ) {
     let Some(import) = &state.import else { return };
     ui.add_space(4.0);
+    let source = import.source.clone();
     if let Some(conv) = &import.converted {
         if let Some(title) = &conv.title {
             ui.label(egui::RichText::new(title).strong());
         }
-        let s = &conv.stats;
         ui.label(
             egui::RichText::new(format!(
-                "Imported from {} — math {} native/{} image/{} raw, {} figures, {} citations",
-                import.source, s.math_tex, s.math_image, s.math_raw, s.images_ok, s.citations
+                "Imported from {source} — {}",
+                import_stats_summary(&conv.stats)
             ))
             .small()
             .weak(),
         );
     } else {
         ui.label(
-            egui::RichText::new(format!("Imported from {} (preparing…)", import.source))
+            egui::RichText::new(format!("Imported from {source} (preparing…)"))
                 .small()
                 .weak(),
         );
     }
 
-    let mut retry_source = None;
-    if let Some(report) = &import.asset_report
-        && asset_status_row(ui, report)
-    {
-        retry_source = Some(import.source.clone());
-    }
-    if let Some(source) = retry_source {
+    // A failed source-archive fetch (arXiv hi-res figures) offers a retry.
+    let mut reimport = import
+        .asset_report
+        .as_ref()
+        .is_some_and(|report| asset_status_row(ui, report));
+
+    let mut clear = false;
+    ui.horizontal(|ui| {
+        reimport |= ui
+            .button("⟳ Reload")
+            .on_hover_text("Re-import from the source (picks up edits to the file)")
+            .clicked();
+        clear = ui.button("✖ Clear import").clicked();
+    });
+
+    // `import`'s borrow has ended; apply the chosen action.
+    if reimport {
         state.importing = true;
         state.import_error = None;
         let _ = command_tx.send(PdfCommand::TypesetImport {
             source,
             config: state.config.clone(),
         });
-    }
-
-    if ui.button("✖ Clear import").clicked() {
+    } else if clear {
         state.import = None;
         state.preview_page_count = 0;
     }
+}
+
+/// One-line import summary: math tiers (only when present), figures (with any
+/// unresolved count), and citations (only when present).
+fn import_stats_summary(s: &ImportStats) -> String {
+    let mut parts = Vec::new();
+    if s.math_tex + s.math_image + s.math_raw > 0 {
+        parts.push(format!(
+            "math {} native/{} image/{} raw",
+            s.math_tex, s.math_image, s.math_raw
+        ));
+    }
+    parts.push(if s.images_failed > 0 {
+        format!("{} figures ({} unresolved)", s.images_ok, s.images_failed)
+    } else {
+        format!("{} figures", s.images_ok)
+    });
+    if s.citations > 0 {
+        parts.push(format!("{} citations", s.citations));
+    }
+    parts.join(", ")
 }
 
 /// One-line status of the hi-res figure pipeline, with explanatory tooltips.
@@ -419,7 +490,11 @@ fn asset_status_row(ui: &mut egui::Ui, report: &AssetReport) -> bool {
 }
 
 /// Source UI for the editable text path: open a file, pick a format, edit text.
-fn editable_source(ui: &mut egui::Ui, state: &mut TypesettingState) {
+fn editable_source(
+    ui: &mut egui::Ui,
+    state: &mut TypesettingState,
+    command_tx: &mpsc::UnboundedSender<PdfCommand>,
+) {
     ui.add_space(4.0);
     ui.label("Source document:");
     ui.horizontal(|ui| {
@@ -430,7 +505,7 @@ fn editable_source(ui: &mut egui::Ui, state: &mut TypesettingState) {
             .map_or_else(|| "(untitled)".to_string(), |n| n.to_string_lossy().into());
         ui.label(name);
         if ui.button("Open...").clicked() {
-            state.open_file_dialog();
+            state.open_file_dialog(command_tx);
         }
     });
 
@@ -475,12 +550,13 @@ fn maybe_regenerate(state: &mut TypesettingState, command_tx: &mpsc::UnboundedSe
                     config: state.config.clone(),
                 });
             }
-            // Restored from disk: re-convert the cached raw HTML once (offline).
+            // Restored from disk: re-convert the cached raw payload once (offline).
             None if !import.reconvert_requested => {
                 import.reconvert_requested = true;
                 state.needs_regeneration = false;
                 let _ = command_tx.send(PdfCommand::TypesetReconvert {
-                    html: Arc::new(import.html.clone()),
+                    payload: Arc::new(import.payload.clone()),
+                    kind: import.kind,
                     raw_assets: Arc::new(import.raw_assets.clone()),
                     overrides: import.overrides.clone(),
                     config: state.config.clone(),
@@ -695,6 +771,9 @@ fn tables_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn document_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
+    // Smart punctuation is baked in at conversion time; for an imported document
+    // that conversion is cached, so the toggle would be inert — hide it there.
+    let imported = state.import.is_some();
     let c = &mut state.config;
     let mut changed = false;
 
@@ -719,12 +798,14 @@ fn document_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
                     num_field(ui, &mut c.toc_depth, 1..=6, "")
                 });
             }
-            changed |= form_row_info(
-                ui,
-                "Smart quotes",
-                "Curly quotes and typographic dashes",
-                |ui| ui.checkbox(&mut c.smart_punctuation, "").changed(),
-            );
+            if !imported {
+                changed |= form_row_info(
+                    ui,
+                    "Smart quotes",
+                    "Curly quotes and typographic dashes",
+                    |ui| ui.checkbox(&mut c.smart_punctuation, "").changed(),
+                );
+            }
         });
 
         ui.add_space(2.0);
@@ -841,6 +922,11 @@ fn spacing_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
 }
 
 fn page_breaks_section(ui: &mut egui::Ui, state: &mut TypesettingState) {
+    // Page-break rules run over editable source text before conversion; an
+    // imported document is converted once, so they don't apply to it.
+    if state.import.is_some() {
+        return;
+    }
     let mut changed = false;
     let positions = [
         (BreakPosition::After, "after"),
@@ -972,7 +1058,8 @@ mod tests {
     fn import_session_round_trips_assets_as_base64() {
         let session = ImportSession {
             source: "arXiv:1706.03762".into(),
-            html: "<p>hi</p>".into(),
+            payload: "<p>hi</p>".into(),
+            kind: InputFormat::Html,
             raw_assets: vec![("fig.png".into(), vec![0u8, 1, 2, 255])],
             overrides: SectionOverrides::new(),
             asset_report: None,
@@ -999,5 +1086,15 @@ mod tests {
         assert_eq!(back.raw_assets, session.raw_assets);
         assert!(back.converted.is_none());
         assert!(!back.reconvert_requested);
+    }
+
+    /// A save written before `payload`/`kind` existed (the field was `html`, with
+    /// no `kind`) restores as an HTML import.
+    #[test]
+    fn import_session_reads_legacy_html_field() {
+        let legacy = r#"{"source":"u","html":"<p>hi</p>","raw_assets":[]}"#;
+        let back: ImportSession = serde_json::from_str(legacy).unwrap();
+        assert_eq!(back.payload, "<p>hi</p>");
+        assert_eq!(back.kind, InputFormat::Html);
     }
 }

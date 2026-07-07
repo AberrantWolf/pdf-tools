@@ -4187,7 +4187,7 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pdf-async-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "pdf-flashcards",
  "pdf-import",
@@ -4199,7 +4199,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-flashcards"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "csv",
  "log",
@@ -4215,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-import"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "flate2",
  "image",
@@ -4232,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-impose"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "log",
  "lopdf",
@@ -4246,7 +4246,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-typeset"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fontdb",
  "log",
@@ -4268,7 +4268,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-units"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "print-junk-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4623,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "print-junk-gui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64",

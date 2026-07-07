@@ -17,7 +17,7 @@ mod archive;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use pdf_typeset::AssetResolver;
+use pdf_typeset::{AssetResolver, InputFormat};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -67,11 +67,15 @@ pub struct AssetReport {
     pub figures_upgraded: usize,
 }
 
-/// An acquired document: its HTML plus the base it was loaded from. Implements
-/// [`AssetResolver`] so it can be handed straight to `pdf_typeset::typeset_html`.
+/// An acquired document: its raw payload plus the base it was loaded from.
+/// Implements [`AssetResolver`] so it can be handed straight to the matching
+/// `pdf_typeset` importer. The payload is HTML or Markdown per [`Imported::kind`].
 pub struct Imported {
-    pub html: String,
-    /// The resolved URL the HTML came from (`None` for a local file).
+    pub payload: String,
+    /// Which importer the payload feeds (HTML for URLs/arXiv, Markdown for a
+    /// local `.md` file).
+    pub kind: InputFormat,
+    /// The resolved URL the payload came from (`None` for a local file).
     pub source_url: Option<String>,
     base: Base,
     #[cfg(feature = "hires")]
@@ -91,9 +95,10 @@ impl Imported {
         }
     }
 
-    fn new(html: String, source_url: Option<String>, base: Base) -> Self {
+    fn new(payload: String, kind: InputFormat, source_url: Option<String>, base: Base) -> Self {
         Self {
-            html,
+            payload,
+            kind,
             source_url,
             base,
             #[cfg(feature = "hires")]
@@ -114,14 +119,23 @@ enum Base {
 pub fn fetch(source: &str) -> Result<Imported, ImportError> {
     let source = source.trim();
 
-    // 1. Local file.
+    // 1. Local file. A `.md` file feeds the Markdown importer; anything else is
+    // treated as HTML.
     let path = Path::new(source);
     if path.exists() {
-        let html = std::fs::read_to_string(path)?;
+        let payload = std::fs::read_to_string(path)?;
         let dir = path
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        return Ok(Imported::new(html, None, Base::Dir(dir)));
+        let kind = match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(InputFormat::from_extension)
+        {
+            Some(InputFormat::Markdown) => InputFormat::Markdown,
+            _ => InputFormat::Html,
+        };
+        return Ok(Imported::new(payload, kind, None, Base::Dir(dir)));
     }
 
     // 2. arXiv reference -> HTML rendering (native, then ar5iv fallback).
@@ -135,7 +149,8 @@ pub fn fetch(source: &str) -> Result<Imported, ImportError> {
                 Ok(html) if looks_like_document(&html) => {
                     let base =
                         url::Url::parse(&url).map_err(|e| ImportError::Invalid(e.to_string()))?;
-                    let mut imported = Imported::new(html, Some(url), Base::Url(base));
+                    let mut imported =
+                        Imported::new(html, InputFormat::Html, Some(url), Base::Url(base));
                     imported.attach_archive(&id);
                     return Ok(imported);
                 }
@@ -154,6 +169,7 @@ pub fn fetch(source: &str) -> Result<Imported, ImportError> {
     let html = get(source)?;
     Ok(Imported::new(
         html,
+        InputFormat::Html,
         Some(source.to_string()),
         Base::Url(base),
     ))
@@ -262,7 +278,8 @@ impl AssetResolver for Imported {
 
 #[cfg(test)]
 mod tests {
-    use super::arxiv_id;
+    use super::{arxiv_id, fetch};
+    use pdf_typeset::InputFormat;
 
     #[test]
     fn recognizes_arxiv_forms() {
@@ -286,5 +303,26 @@ mod tests {
     fn ignores_non_arxiv() {
         assert_eq!(arxiv_id("https://example.com/page.html"), None);
         assert_eq!(arxiv_id("notes.html"), None);
+    }
+
+    #[test]
+    fn local_markdown_file_fetches_as_markdown() {
+        let dir = std::env::temp_dir().join(format!("pdf-import-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("doc.md");
+        std::fs::write(&path, "# Heading\n\nBody.\n").unwrap();
+
+        let imported = fetch(path.to_str().unwrap()).expect("fetch");
+        assert_eq!(imported.kind, InputFormat::Markdown);
+        assert!(imported.payload.contains("# Heading"));
+
+        let html = dir.join("page.html");
+        std::fs::write(&html, "<p>hi</p>").unwrap();
+        assert_eq!(
+            fetch(html.to_str().unwrap()).unwrap().kind,
+            InputFormat::Html
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

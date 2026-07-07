@@ -357,6 +357,24 @@ impl eframe::App for PrintJunkApp {
                         .command_tx
                         .send(PdfCommand::FlashcardsLoadConfig { path });
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                Mode::Typesetting
+                    if matches!(
+                        ext,
+                        "md" | "markdown"
+                            | "mdown"
+                            | "mkd"
+                            | "txt"
+                            | "text"
+                            | "html"
+                            | "htm"
+                            | "xhtml"
+                    ) =>
+                {
+                    log::info!("Loading typesetting source: {}", path.display());
+                    self.typesetting_state
+                        .load_source_file(path, &self.command_tx);
+                }
                 _ if ext == "pdf" => {
                     log::info!("Loading PDF: {}", path.display());
                     let _ = self.command_tx.send(PdfCommand::ViewerLoad { path });
@@ -412,7 +430,9 @@ impl eframe::App for PrintJunkApp {
                             });
                         }
                     }
-                    Mode::Typesetting => self.typesetting_state.open_file_dialog(),
+                    Mode::Typesetting => {
+                        self.typesetting_state.open_file_dialog(&self.command_tx);
+                    }
                 }
             }
 
@@ -539,7 +559,8 @@ impl eframe::App for PrintJunkApp {
                     pdf_bytes,
                     page_count,
                     source,
-                    html,
+                    payload,
+                    kind,
                     raw_assets,
                     body,
                     assets,
@@ -572,7 +593,8 @@ impl eframe::App for PrintJunkApp {
                         .unwrap_or_default();
                     self.typesetting_state.import = Some(crate::views::ImportSession {
                         source,
-                        html: (*html).clone(),
+                        payload: (*payload).clone(),
+                        kind,
                         raw_assets: (*raw_assets).clone(),
                         overrides,
                         asset_report: Some(asset_report),

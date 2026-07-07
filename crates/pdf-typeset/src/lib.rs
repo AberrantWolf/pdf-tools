@@ -7,6 +7,7 @@
 //! Desktop-only — Typst is a large, native-oriented dependency, so this crate is
 //! excluded from the WASM build (gated by the GUI's `typesetting` feature).
 
+mod asset;
 mod config;
 mod html;
 mod markup;
@@ -20,6 +21,7 @@ pub use config::{
     TableBorder, TableStyle, TypesetConfig, TypesetInput,
 };
 pub use html::{AssetResolver, CapturingResolver, ImportStats, ImportedDoc, MapResolver, NoAssets};
+pub use markup::import_markdown;
 pub use math::{MathAsset, MathPipeline, MathRender, MathSource, Tex2TypstRs, TexMathEngine, Tier};
 pub use outline::{FRONT_MATTER_ID, OutlineEntry, SectionOverride, assemble_body};
 

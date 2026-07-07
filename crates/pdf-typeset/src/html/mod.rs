@@ -17,11 +17,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::hash::{Hash, Hasher};
 
 use scraper::node::Node;
 use scraper::{ElementRef, Html, Selector};
 
+use crate::asset::AssetRegistry;
 use crate::markup::escape_inline;
 use crate::outline::{OutlineEntry, SECTION_MARK, strip_markers};
 use crate::typst_table::{Align, Cell, Table as TypstTable};
@@ -141,12 +141,15 @@ pub fn import(html: &str, resolver: &dyn AssetResolver) -> ImportedDoc {
     let mut outline = imp.outline;
     let body = strip_markers(&raw, &mut outline);
 
+    let mut stats = imp.stats;
+    stats.images_ok = imp.assets.ok;
+    stats.images_failed = imp.assets.failed;
     ImportedDoc {
         body,
-        assets: imp.out_assets,
+        assets: imp.assets.into_assets(),
         outline,
         title: imp.title,
-        stats: imp.stats,
+        stats,
     }
 }
 
@@ -195,10 +198,9 @@ fn is_skipped(el: ElementRef<'_>) -> bool {
 }
 
 struct Importer<'r> {
-    resolver: &'r dyn AssetResolver,
     math: MathPipeline,
-    out_assets: Vec<(String, Vec<u8>)>,
-    asset_names: HashMap<String, String>,
+    /// Fetched images and math SVGs, registered as named `Typst` files.
+    assets: AssetRegistry<'r>,
     title: Option<String>,
     stats: ImportStats,
     /// `id`s of `<li class="ltx_bibitem">` entries — populated up front so a
@@ -218,10 +220,8 @@ struct Importer<'r> {
 impl<'r> Importer<'r> {
     fn new(resolver: &'r dyn AssetResolver) -> Self {
         Self {
-            resolver,
             math: MathPipeline::default(),
-            out_assets: Vec::new(),
-            asset_names: HashMap::new(),
+            assets: AssetRegistry::new(resolver),
             title: None,
             stats: ImportStats::default(),
             bib_ids: HashSet::new(),
@@ -419,7 +419,7 @@ impl<'r> Importer<'r> {
             Tier::Raw => self.stats.math_raw += 1,
         }
         for asset in r.assets {
-            self.out_assets.push((asset.name, asset.svg));
+            self.assets.push(asset.name, asset.svg);
         }
         r.typst
     }
@@ -478,26 +478,10 @@ impl<'r> Importer<'r> {
         let Some(src) = el.value().attr("src") else {
             return String::new();
         };
-        if let Some(name) = self.asset_for(src) {
-            format!("#box(image({}))", typst_string(&name))
-        } else {
-            self.stats.images_failed += 1;
-            String::new()
+        match self.assets.image(src) {
+            Some(name) => format!("#box(image({}))", typst_string(&name)),
+            None => String::new(),
         }
-    }
-
-    /// Fetch and register an image asset, returning its `Typst` file name. Deduped
-    /// by source so a repeated image is fetched once.
-    fn asset_for(&mut self, src: &str) -> Option<String> {
-        if let Some(name) = self.asset_names.get(src) {
-            return Some(name.clone());
-        }
-        let bytes = self.resolver.fetch(src)?;
-        let name = format!("img-{:016x}{}", hash(src), ext_of(src));
-        self.out_assets.push((name.clone(), bytes));
-        self.asset_names.insert(src.to_string(), name.clone());
-        self.stats.images_ok += 1;
-        Some(name)
     }
 
     /// A `LaTeXML` display equation (`ltx_equation`) or `align` group
@@ -743,18 +727,6 @@ fn heading_text(el: ElementRef<'_>) -> String {
     collapse_ws(&s).trim().to_string()
 }
 
-/// File extension from a URL/path (lowercased, incl. the dot), defaulting to
-/// `.png` when none is present.
-fn ext_of(src: &str) -> String {
-    let path = src.split(['?', '#']).next().unwrap_or(src);
-    match path.rsplit('/').next().and_then(|f| f.rsplit_once('.')) {
-        Some((_, ext)) if ext.len() <= 5 && ext.chars().all(char::is_alphanumeric) => {
-            format!(".{}", ext.to_ascii_lowercase())
-        }
-        _ => ".png".to_string(),
-    }
-}
-
 /// Escape a string for a `Typst` double-quoted string literal.
 fn typst_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -769,12 +741,6 @@ fn typst_string(s: &str) -> String {
     }
     out.push('"');
     out
-}
-
-fn hash(s: &str) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
 }
 
 #[cfg(test)]
